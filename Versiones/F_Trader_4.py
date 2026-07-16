@@ -1,0 +1,505 @@
+import sys
+import time
+from datetime import datetime
+
+from PyQt6 import uic
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QStringListModel
+from PyQt6.QtGui import QStandardItemModel, QStandardItem
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QFileDialog,
+    QTableWidgetItem,
+    QMessageBox,
+    QAbstractItemView,
+    QHeaderView,
+    QTextEdit,
+)
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+import io
+import contextlib
+
+# =========================================================
+# CONFIGURACIÓN
+# =========================================================
+
+PERIOD = "1y"
+INTERVAL = "1d"
+
+EXPORT_EXCEL = True
+EXCEL_NAME = "SmartMoney_Screener.xlsx"
+
+DELAY_BETWEEN_REQUESTS = 1
+TXT_FILE = "Mi_Lista.txt"
+
+
+# =========================================================
+# FUNCIONES AUXILIARES
+# =========================================================
+
+
+def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            # yfinance sometimes prints errors to stdout/stderr; silenciamos esa salida
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stock_data = yf.download(
+                    ticker,
+                    period=period,
+                    interval=interval,
+                    auto_adjust=True,
+                    progress=False,
+                    group_by="column",
+                )
+
+            if isinstance(stock_data.columns, pd.MultiIndex):
+                stock_data.columns = stock_data.columns.get_level_values(0)
+
+            stock_data.dropna(inplace=True)
+            if stock_data.empty:
+                return None, f"Sin datos disponibles para {ticker}"
+
+            return stock_data, None
+
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                return None, f"Error después de {max_retries} intentos: {str(e)}"
+
+
+
+def load_tickers(filename):
+    try:
+        with open(filename, "r", encoding="utf-8") as file:
+            content = file.read()
+    except FileNotFoundError:
+        return []
+
+    prefixes = ["NASDAQ:", "NYSE:", "AMEX:"]
+    tickers = []
+
+    for item in content.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        for prefix in prefixes:
+            item = item.replace(prefix, "")
+        item = item.upper().replace(":", ".")
+        tickers.append(item)
+
+    return [ticker for ticker in tickers if ticker]
+
+
+
+def calculate_indicators(dataframe):
+    data = dataframe.copy()
+
+    cfi_raw = data["Volume"] * (data["Close"] - data["Open"])
+    data["cfi"] = cfi_raw.ewm(span=20, adjust=False).mean()
+    data["cfi_ma"] = data["cfi"].ewm(span=20, adjust=False).mean()
+    data["cfi_up"] = data["cfi"] > data["cfi_ma"]
+
+    weekly = data.resample("W").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    })
+    weekly_cfi_raw = weekly["Volume"] * (weekly["Close"] - weekly["Open"])
+    weekly["cfi_w"] = weekly_cfi_raw.ewm(span=20, adjust=False).mean()
+    weekly["cfi_w_ma"] = weekly["cfi_w"].ewm(span=20, adjust=False).mean()
+    weekly["cfi_w_up"] = weekly["cfi_w"] > weekly["cfi_w_ma"]
+    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, fill_value=False).ffill()
+
+    data["vol_ma"] = data["Volume"].rolling(50).mean()
+    data["vol_strong"] = data["Volume"] > data["vol_ma"]
+
+    spread = np.maximum(data["High"] - data["Low"], 0.0001)
+    data["close_pos"] = (data["Close"] - data["Low"]) / spread
+    data["strength"] = 2 * data["close_pos"] - 1
+    data["flow"] = np.where(data["vol_strong"], data["strength"] * data["Volume"], 0)
+    data["flow_smooth"] = data["flow"].ewm(span=5, adjust=False).mean()
+
+    data["accumulation"] = (
+        data["vol_strong"] &
+        (data["close_pos"] > 0.6) &
+        (data["Close"] >= data["Open"])
+    )
+    data["distribution"] = (
+        data["vol_strong"] &
+        (data["close_pos"] < 0.4) &
+        (data["Close"] <= data["Open"])
+    )
+
+    data["ema21"] = data["Close"].ewm(span=21, adjust=False).mean()
+    data["sma50"] = data["Close"].rolling(50).mean()
+    data["sma200"] = data["Close"].rolling(200).mean()
+    data["trend_up"] = (
+        (data["Close"] > data["ema21"]) &
+        (data["ema21"] > data["sma50"]) &
+        (data["sma50"] > data["sma200"])
+    )
+
+    data["bull_div"] = (
+        (data["Low"].shift(5) < data["Low"].shift(10)) &
+        (data["flow_smooth"].shift(5) > data["flow_smooth"].shift(10))
+    )
+    data["bear_div"] = (
+        (data["High"].shift(5) > data["High"].shift(10)) &
+        (data["flow_smooth"].shift(5) < data["flow_smooth"].shift(10))
+    )
+
+    data["buy_pro"] = (
+        data["trend_up"] &
+        data["cfi_up"] &
+        ((data["flow_smooth"] > 0) | data["accumulation"])
+    )
+    data["buy_early"] = data["bull_div"] & (data["flow_smooth"] > 0)
+    data["sell"] = data["distribution"] | data["bear_div"] | (data["flow_smooth"] < 0)
+
+    bool_cols = [
+        "cfi_up", "cfi_w_up", "vol_strong", "accumulation",
+        "distribution", "trend_up", "bull_div", "bear_div",
+        "buy_pro", "buy_early", "sell",
+    ]
+    data[bool_cols] = data[bool_cols].fillna(False)
+
+    data["score"] = (
+        (data["trend_up"].astype(int) * 25) +
+        (data["cfi_up"].astype(int) * 25) +
+        (data["cfi_w_up"].astype(int) * 20) +
+        (data["accumulation"].astype(int) * 15) +
+        ((data["flow_smooth"] > 0).astype(int) * 15)
+    )
+
+    conditions = [data["buy_pro"], data["buy_early"], data["sell"]]
+    choices = ["COMPRA FUERTE", "COMPRA TEMPRANA", "VENTA"]
+    data["signal"] = np.select(conditions, choices, default="ESPERA")
+
+    return data
+
+
+class AnalysisThread(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, tickers):
+        super().__init__()
+        self.tickers = tickers
+        self._stop_requested = False
+
+    def request_stop(self):
+        self._stop_requested = True
+
+    def run(self):
+        results = []
+        for ticker in self.tickers:
+            if self._stop_requested:
+                self.progress.emit("Análisis cancelado.")
+                return
+
+            self.progress.emit(f"Analizando {ticker}...")
+            stock_data, error_msg = download_data_safe(ticker, period=PERIOD, interval=INTERVAL)
+
+            if self._stop_requested:
+                self.progress.emit("Análisis cancelado.")
+                return
+
+            if stock_data is None:
+                self.progress.emit(error_msg)
+                continue
+
+            try:
+                stock_data = calculate_indicators(stock_data)
+                last = stock_data.iloc[-1]
+                results.append({
+                    "Ticker": ticker,
+                    "Precio": round(float(last["Close"]), 2),
+                    "Signal": str(last["signal"]),
+                    "Score": int(last["score"]),
+                    "Trend": "SI" if last["trend_up"] else "NO",
+                    "CFI Diario": "FUERTE" if last["cfi_up"] else "DEBIL",
+                    "CFI Semanal": "FUERTE" if last["cfi_w_up"] else "DEBIL",
+                    "Flow": "COMPRANDO" if last["flow_smooth"] > 0 else "VENDIENDO",
+                    "Smart Money": (
+                        "ACUMULANDO" if last["accumulation"]
+                        else "DISTRIBUYENDO" if last["distribution"]
+                        else "NEUTRO"
+                    ),
+                    "Vol Relativo": (
+                        round(float(last["Volume"]) / float(last["vol_ma"]), 2)
+                        if float(last["vol_ma"]) > 0 else 0
+                    ),
+                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                })
+            except Exception as exc:
+                self.progress.emit(f"Error procesando {ticker}: {exc}")
+
+            time.sleep(DELAY_BETWEEN_REQUESTS)
+
+        self.finished.emit(results)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        uic.loadUi("F_Trader_4.ui", self)
+
+        self.E_Lista_model = QStringListModel()
+        self.E_Lista.setModel(self.E_Lista_model)
+
+        # Soportar dos tipos de widgets para E_Ticker: un view con modelo (QStringListModel)
+        # o un QTextEdit (más simple y editable por defecto).
+        self._ticker_is_model = False
+        try:
+            # Intentar usar como lista ligada a modelo
+            self.E_Ticker_model = QStringListModel()
+            self.E_Ticker.setModel(self.E_Ticker_model)
+            self.E_Ticker.setSelectionMode(self.E_Ticker.SelectionMode.SingleSelection)
+            self.E_Ticker.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
+            self._ticker_is_model = True
+        except Exception:
+            # Si falla, tratamos E_Ticker como QTextEdit
+            self.E_Ticker_model = None
+            self._ticker_is_model = False
+            if isinstance(self.E_Ticker, QTextEdit):
+                # dejar el widget editable (por defecto ya lo es)
+                pass
+        # Señal para suprimir efectos durante cambios programáticos
+        self._suppress_e_ticker_edit_signal = False
+        # Conectar señales para detectar edición del E_Ticker
+        try:
+            if self._ticker_is_model and self.E_Ticker_model is not None:
+                self.E_Ticker_model.dataChanged.connect(self.on_e_ticker_edited)
+                self.E_Ticker_model.rowsInserted.connect(self.on_e_ticker_edited)
+                self.E_Ticker_model.rowsRemoved.connect(self.on_e_ticker_edited)
+            else:
+                if isinstance(self.E_Ticker, QTextEdit):
+                    self.E_Ticker.textChanged.connect(self.on_e_ticker_edited)
+        except Exception:
+            pass
+
+        self.E_Visor_model = QStringListModel()
+        self.E_Visor.setModel(self.E_Visor_model)
+
+        self.B_Lista.clicked.connect(self.on_b_lista)
+        self.B_Ticker.clicked.connect(self.on_b_analizar)
+        self.B_Cancelar.clicked.connect(self.on_b_cancelar)
+        self.B_Salir.clicked.connect(self.close)
+
+        self.analysis_thread = None
+        self.current_tickers = []
+        self.set_table_headers([])
+
+    def set_table_headers(self, headers):
+        if not headers:
+            self.E_Resultados.setColumnCount(0)
+            self.E_Resultados.setRowCount(0)
+            return
+        self.E_Resultados.setColumnCount(len(headers))
+        self.E_Resultados.setHorizontalHeaderLabels(headers)
+        self.E_Resultados.setRowCount(0)
+        # Ajustar tamaño de columnas al tamaño de la ventana
+        try:
+            header = self.E_Resultados.horizontalHeader()
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        except Exception:
+            pass
+
+    def append_to_visor(self, message):
+        current = self.E_Visor_model.stringList()
+        current.append(message)
+        self.E_Visor_model.setStringList(current)
+        self.E_Visor.scrollToBottom()
+
+    def clear_visor(self):
+        self.E_Visor_model.setStringList([])
+
+    def on_b_lista(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Seleccionar Archivo de Tickers", "", "Archivos TXT (*.txt)")
+        if not file_path:
+            return
+
+        self.E_Lista_model.setStringList([file_path])
+        self.append_to_visor(f"Archivo seleccionado: {file_path}")
+
+        tickers = load_tickers(file_path)
+        if not tickers:
+            QMessageBox.warning(self, "Advertencia", "No se encontraron tickers en el archivo.")
+            return
+
+        self.current_tickers = tickers
+        # Evitar que los cambios programáticos disparen la limpieza de E_Lista
+        self._suppress_e_ticker_edit_signal = True
+        if self._ticker_is_model:
+            self.E_Ticker_model.setStringList(tickers)
+            try:
+                self.E_Ticker.setCurrentIndex(self.E_Ticker_model.index(0, 0))
+            except Exception:
+                pass
+        else:
+            # poner cada ticker en una línea del QTextEdit
+            self.E_Ticker.setPlainText("\n".join(tickers))
+        self._suppress_e_ticker_edit_signal = False
+
+        self.start_analysis(tickers)
+
+    def get_selected_tracker(self):
+        if self._ticker_is_model:
+            selected_indexes = self.E_Ticker.selectionModel().selectedIndexes()
+            if selected_indexes:
+                return selected_indexes[0].data()
+            if self.E_Ticker_model and self.E_Ticker_model.rowCount() > 0:
+                return self.E_Ticker_model.data(self.E_Ticker_model.index(0, 0), Qt.ItemDataRole.DisplayRole)
+            return None
+        else:
+            text = self.E_Ticker.toPlainText().strip()
+            if not text:
+                return None
+            # devolver la primera línea
+            return text.splitlines()[0].strip()
+
+    def parse_tickers_from_model(self):
+        # Extrae y normaliza tickers desde el modelo editable de E_Ticker
+        combined = []
+        if self._ticker_is_model and self.E_Ticker_model:
+            raw_items = [self.E_Ticker_model.data(self.E_Ticker_model.index(i, 0), Qt.ItemDataRole.DisplayRole) for i in range(self.E_Ticker_model.rowCount())]
+            iterator = raw_items
+        else:
+            text = self.E_Ticker.toPlainText()
+            # dividir en líneas
+            iterator = [ln for ln in text.splitlines()]
+
+        for it in iterator:
+            if it is None:
+                continue
+            # dividir por comas, punto y coma
+            parts = [p.strip() for p in str(it).replace(";", ",").split(",")]
+            for p in parts:
+                if not p:
+                    continue
+                # Normalizar: quitar prefijos y convertir a formato esperado
+                p = p.upper().replace("NASDAQ:", "").replace("NYSE:", "").replace("AMEX:", "")
+                p = p.replace(":", ".").strip()
+                if p:
+                    combined.append(p)
+
+        # eliminar duplicados preservando orden
+        seen = set()
+        result = []
+        for t in combined:
+            if t not in seen:
+                seen.add(t)
+                result.append(t)
+        return result
+
+    def on_b_analizar(self):
+        if self.analysis_thread and self.analysis_thread.isRunning():
+            QMessageBox.warning(self, "Proceso en curso", "Ya hay un análisis en curso. Cancela antes de iniciar otro.")
+            return
+
+        tickers = self.parse_tickers_from_model()
+        if not tickers:
+            QMessageBox.warning(self, "Sin tickers", "No hay tickers en E_Ticker para analizar.")
+            return
+
+        self.append_to_visor(f"Iniciando análisis para {len(tickers)} tickers...")
+        self.start_analysis(tickers)
+
+    def start_analysis(self, tickers):
+        self.clear_visor()
+        self.append_to_visor("Iniciando análisis...")
+        self.B_Lista.setEnabled(False)
+        self.B_Ticker.setEnabled(False)
+        self.B_Cancelar.setEnabled(True)
+        self.set_table_headers([])
+        # Al iniciar análisis, vaciar la ventana E_Ticker
+        try:
+            self._suppress_e_ticker_edit_signal = True
+            if self._ticker_is_model and self.E_Ticker_model is not None:
+                self.E_Ticker_model.setStringList([])
+            else:
+                if isinstance(self.E_Ticker, QTextEdit):
+                    self.E_Ticker.clear()
+        finally:
+            self._suppress_e_ticker_edit_signal = False
+        self.analysis_thread = AnalysisThread(tickers)
+        self.analysis_thread.progress.connect(self.append_to_visor)
+        self.analysis_thread.finished.connect(self.on_analysis_finished)
+        self.analysis_thread.error.connect(self.on_analysis_error)
+        self.analysis_thread.start()
+
+    def on_e_ticker_edited(self, *args, **kwargs):
+        # Si el cambio fue programático, no borramos E_Lista
+        if getattr(self, "_suppress_e_ticker_edit_signal", False):
+            return
+        try:
+            # Limpiar E_Lista (archivo seleccionado)
+            if self.E_Lista_model is not None:
+                self.E_Lista_model.setStringList([])
+            # Limpiar visor y otras ventanas de texto
+            try:
+                self.clear_visor()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def on_analysis_finished(self, results):
+        self.append_to_visor("Análisis finalizado.")
+        self.B_Lista.setEnabled(True)
+        self.B_Ticker.setEnabled(True)
+        self.B_Cancelar.setEnabled(False)
+
+        if not results:
+            self.append_to_visor("No se generaron resultados.")
+            return
+
+        # Ordenar por Score descendente (ranking mayor a menor) y filtrar
+        sorted_results = sorted(results, key=lambda r: int(r.get("Score", 0)), reverse=True)
+        filtered_results = [row for row in sorted_results if int(row.get("Score", 0)) >= 60]
+        if not filtered_results:
+            self.append_to_visor("No se generaron resultados con score >= 60.")
+            return
+
+        columns = list(filtered_results[0].keys())
+        self.set_table_headers(columns)
+        self.E_Resultados.setRowCount(len(filtered_results))
+        for row_idx, row_data in enumerate(filtered_results):
+            for col_idx, header in enumerate(columns):
+                item = QTableWidgetItem(str(row_data[header]))
+                self.E_Resultados.setItem(row_idx, col_idx, item)
+
+        if EXPORT_EXCEL:
+            df = pd.DataFrame(filtered_results)
+            try:
+                df.to_excel(EXCEL_NAME, index=False)
+                self.append_to_visor(f"Excel exportado: {EXCEL_NAME}")
+            except Exception as exc:
+                self.append_to_visor(f"Error exportando Excel: {exc}")
+
+    def on_analysis_error(self, message):
+        self.append_to_visor(message)
+
+    def on_b_cancelar(self):
+        if self.analysis_thread and self.analysis_thread.isRunning():
+            self.analysis_thread.request_stop()
+            self.analysis_thread.terminate()
+            self.analysis_thread.wait(1000)
+            self.append_to_visor("Se solicitó cancelar el análisis.")
+            self.B_Lista.setEnabled(True)
+            self.B_Ticker.setEnabled(True)
+            self.B_Cancelar.setEnabled(False)
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

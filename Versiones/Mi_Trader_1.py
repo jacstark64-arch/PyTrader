@@ -1,8 +1,15 @@
 # =========================================================
-#   SMART MONEY / CFI SCREENER
-#   Versión completa corregida y optimizada
+# SMART MONEY / CFI SCREENER
+#
+# Analiza empresas usando:
+# - CFI Diario y Semanal
+# - Smart Money Flow
+# - Acumulación / Distribución
+# - Tendencia
+# - Divergencias
+#
+# Exporta resultados a Excel.
 # =========================================================
-
 # =========================================================
 # INSTALAR LIBRERÍAS
 # =========================================================
@@ -11,12 +18,12 @@
 #
 # =========================================================
 
-import yfinance as yf
-import pandas as pd
-import numpy as np
 import time
-
 from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
 
 # =========================================================
 # CONFIGURACIÓN
@@ -28,16 +35,17 @@ INTERVAL = "1d"
 EXPORT_EXCEL = True
 EXCEL_NAME = "SmartMoney_Screener.xlsx"
 
-# Tiempo entre consultas Yahoo
+# Tiempo entre peticiones a Yahoo
 DELAY_BETWEEN_REQUESTS = 1
+
+# Archivo TXT con tickers
+TXT_FILE = "Magnificas.txt"
 
 # =========================================================
 # CARGAR TICKERS DESDE TXT
 # =========================================================
 
-TXT_FILE = "Magnificas.txt"
-
-with open(TXT_FILE, "r") as file:
+with open(TXT_FILE, "r", encoding="utf-8") as file:
 
     content = file.read()
 
@@ -65,37 +73,42 @@ print(TICKERS)
 print("=" * 80)
 
 # =========================================================
-# FUNCIÓN PRINCIPAL INDICADORES
+# FUNCIÓN PRINCIPAL
 # =========================================================
 
-def calculate_indicators(dataframe):
 
-    df = dataframe.copy()
+def calculate_indicators(dataframe):
+    """
+    Calcula indicadores Smart Money,
+    CFI, Flow, Tendencia y señales.
+    """
+
+    data = dataframe.copy()
 
     # =====================================================
     # CFI DIARIO
     # =====================================================
 
-    df["cfi"] = (
-        df["Volume"] *
-        (df["Close"] - df["Open"])
+    data["cfi"] = (
+        data["Volume"] *
+        (data["Close"] - data["Open"])
     ).ewm(span=20, adjust=False).mean()
 
-    df["cfi_ma"] = (
-        df["cfi"]
+    data["cfi_ma"] = (
+        data["cfi"]
         .ewm(span=20, adjust=False)
         .mean()
     )
 
-    df["cfi_up"] = (
-        df["cfi"] > df["cfi_ma"]
+    data["cfi_up"] = (
+        data["cfi"] > data["cfi_ma"]
     )
 
     # =====================================================
     # CFI SEMANAL
     # =====================================================
 
-    weekly = df.resample("W").agg({
+    weekly = data.resample("W").agg({
         "Open": "first",
         "High": "max",
         "Low": "min",
@@ -119,24 +132,24 @@ def calculate_indicators(dataframe):
         weekly["cfi_w_ma"]
     )
 
-    df["cfi_w_up"] = (
+    data["cfi_w_up"] = (
         weekly["cfi_w_up"]
-        .reindex(df.index, method="ffill")
+        .reindex(data.index, method="ffill")
     )
 
     # =====================================================
     # VOLUMEN
     # =====================================================
 
-    df["vol_ma"] = (
-        df["Volume"]
+    data["vol_ma"] = (
+        data["Volume"]
         .rolling(50)
         .mean()
     )
 
-    df["vol_strong"] = (
-        df["Volume"] >
-        df["vol_ma"]
+    data["vol_strong"] = (
+        data["Volume"] >
+        data["vol_ma"]
     )
 
     # =====================================================
@@ -144,27 +157,27 @@ def calculate_indicators(dataframe):
     # =====================================================
 
     spread = np.maximum(
-        df["High"] - df["Low"],
+        data["High"] - data["Low"],
         0.0001
     )
 
-    df["close_pos"] = (
-        (df["Close"] - df["Low"]) /
+    data["close_pos"] = (
+        (data["Close"] - data["Low"]) /
         spread
     )
 
-    df["strength"] = (
-        2 * df["close_pos"] - 1
+    data["strength"] = (
+        2 * data["close_pos"] - 1
     )
 
-    df["flow"] = np.where(
-        df["vol_strong"],
-        df["strength"] * df["Volume"],
+    data["flow"] = np.where(
+        data["vol_strong"],
+        data["strength"] * data["Volume"],
         0
     )
 
-    df["flow_smooth"] = (
-        df["flow"]
+    data["flow_smooth"] = (
+        data["flow"]
         .ewm(span=5, adjust=False)
         .mean()
     )
@@ -173,63 +186,63 @@ def calculate_indicators(dataframe):
     # ACUMULACIÓN / DISTRIBUCIÓN
     # =====================================================
 
-    df["accumulation"] = (
-        (df["vol_strong"]) &
-        (df["close_pos"] > 0.6) &
-        (df["Close"] >= df["Open"])
+    data["accumulation"] = (
+        (data["vol_strong"]) &
+        (data["close_pos"] > 0.6) &
+        (data["Close"] >= data["Open"])
     )
 
-    df["distribution"] = (
-        (df["vol_strong"]) &
-        (df["close_pos"] < 0.4) &
-        (df["Close"] <= df["Open"])
+    data["distribution"] = (
+        (data["vol_strong"]) &
+        (data["close_pos"] < 0.4) &
+        (data["Close"] <= data["Open"])
     )
 
     # =====================================================
     # TENDENCIA
     # =====================================================
 
-    df["ema21"] = (
-        df["Close"]
+    data["ema21"] = (
+        data["Close"]
         .ewm(span=21, adjust=False)
         .mean()
     )
 
-    df["sma50"] = (
-        df["Close"]
+    data["sma50"] = (
+        data["Close"]
         .rolling(50)
         .mean()
     )
 
-    df["sma200"] = (
-        df["Close"]
+    data["sma200"] = (
+        data["Close"]
         .rolling(200)
         .mean()
     )
 
-    df["trend_up"] = (
-        (df["Close"] > df["ema21"]) &
-        (df["ema21"] > df["sma50"]) &
-        (df["sma50"] > df["sma200"])
+    data["trend_up"] = (
+        (data["Close"] > data["ema21"]) &
+        (data["ema21"] > data["sma50"]) &
+        (data["sma50"] > data["sma200"])
     )
 
     # =====================================================
     # DIVERGENCIAS
     # =====================================================
 
-    df["bull_div"] = (
-        (df["Low"].shift(5) < df["Low"].shift(10)) &
+    data["bull_div"] = (
+        (data["Low"].shift(5) < data["Low"].shift(10)) &
         (
-            df["flow_smooth"].shift(5) >
-            df["flow_smooth"].shift(10)
+            data["flow_smooth"].shift(5) >
+            data["flow_smooth"].shift(10)
         )
     )
 
-    df["bear_div"] = (
-        (df["High"].shift(5) > df["High"].shift(10)) &
+    data["bear_div"] = (
+        (data["High"].shift(5) > data["High"].shift(10)) &
         (
-            df["flow_smooth"].shift(5) <
-            df["flow_smooth"].shift(10)
+            data["flow_smooth"].shift(5) <
+            data["flow_smooth"].shift(10)
         )
     )
 
@@ -237,28 +250,28 @@ def calculate_indicators(dataframe):
     # SEÑALES
     # =====================================================
 
-    df["buy_pro"] = (
-        df["trend_up"] &
-        df["cfi_up"] &
+    data["buy_pro"] = (
+        data["trend_up"] &
+        data["cfi_up"] &
         (
-            (df["flow_smooth"] > 0) |
-            (df["accumulation"])
+            (data["flow_smooth"] > 0) |
+            (data["accumulation"])
         )
     )
 
-    df["buy_early"] = (
-        df["bull_div"] &
-        (df["flow_smooth"] > 0)
+    data["buy_early"] = (
+        data["bull_div"] &
+        (data["flow_smooth"] > 0)
     )
 
-    df["sell"] = (
-        df["distribution"] |
-        df["bear_div"] |
-        (df["flow_smooth"] < 0)
+    data["sell"] = (
+        data["distribution"] |
+        data["bear_div"] |
+        (data["flow_smooth"] < 0)
     )
 
     # =====================================================
-    # ELIMINAR NaN BOOLEANOS
+    # LIMPIAR NaN BOOLEANOS
     # =====================================================
 
     bool_cols = [
@@ -277,34 +290,34 @@ def calculate_indicators(dataframe):
 
     for col in bool_cols:
 
-        df[col] = df[col].fillna(False)
+        data[col] = data[col].fillna(False)
 
     # =====================================================
     # SCORE
     # =====================================================
 
-    df["score"] = 0
+    data["score"] = 0
 
-    trend_mask = df["trend_up"]
-    cfi_mask = df["cfi_up"]
-    cfiw_mask = df["cfi_w_up"]
-    acc_mask = df["accumulation"]
-    flow_mask = (df["flow_smooth"] > 0).fillna(False)
+    trend_mask = data["trend_up"]
+    cfi_mask = data["cfi_up"]
+    cfiw_mask = data["cfi_w_up"]
+    acc_mask = data["accumulation"]
+    flow_mask = (data["flow_smooth"] > 0).fillna(False)
 
-    df.loc[trend_mask, "score"] += 25
-    df.loc[cfi_mask, "score"] += 25
-    df.loc[cfiw_mask, "score"] += 20
-    df.loc[acc_mask, "score"] += 15
-    df.loc[flow_mask, "score"] += 15
+    data.loc[trend_mask, "score"] += 25
+    data.loc[cfi_mask, "score"] += 25
+    data.loc[cfiw_mask, "score"] += 20
+    data.loc[acc_mask, "score"] += 15
+    data.loc[flow_mask, "score"] += 15
 
     # =====================================================
     # TEXTO SEÑAL
     # =====================================================
 
     conditions = [
-        df["buy_pro"],
-        df["buy_early"],
-        df["sell"]
+        data["buy_pro"],
+        data["buy_early"],
+        data["sell"]
     ]
 
     choices = [
@@ -313,13 +326,14 @@ def calculate_indicators(dataframe):
         "VENTA"
     ]
 
-    df["signal"] = np.select(
+    data["signal"] = np.select(
         conditions,
         choices,
         default="ESPERA"
     )
 
-    return df
+    return data
+
 
 # =========================================================
 # ANALIZAR EMPRESAS
@@ -337,7 +351,7 @@ for ticker in TICKERS:
         # DESCARGAR DATOS
         # =================================================
 
-        df = yf.download(
+        stock_data = yf.download(
             ticker,
             period=PERIOD,
             interval=INTERVAL,
@@ -350,19 +364,19 @@ for ticker in TICKERS:
         # CORREGIR MULTIINDEX
         # =================================================
 
-        if isinstance(df.columns, pd.MultiIndex):
+        if isinstance(stock_data.columns, pd.MultiIndex):
 
-            df.columns = (
-                df.columns.get_level_values(0)
+            stock_data.columns = (
+                stock_data.columns.get_level_values(0)
             )
 
         # =================================================
         # LIMPIAR DATOS
         # =================================================
 
-        df.dropna(inplace=True)
+        stock_data.dropna(inplace=True)
 
-        if df.empty:
+        if stock_data.empty:
 
             print(f"Sin datos para {ticker}")
             continue
@@ -371,13 +385,13 @@ for ticker in TICKERS:
         # CALCULAR INDICADORES
         # =================================================
 
-        df = calculate_indicators(df)
+        stock_data = calculate_indicators(stock_data)
 
         # =================================================
         # ÚLTIMO REGISTRO
         # =================================================
 
-        last = df.iloc[-1]
+        last = stock_data.iloc[-1]
 
         # =================================================
         # GUARDAR RESULTADOS
@@ -459,10 +473,15 @@ for ticker in TICKERS:
 
         time.sleep(DELAY_BETWEEN_REQUESTS)
 
-    except Exception as e:
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        IndexError
+    ) as error:
 
         print(f"\nERROR EN {ticker}")
-        print(e)
+        print(error)
 
 # =========================================================
 # CREAR DATAFRAME
@@ -511,7 +530,6 @@ if not results_df.empty and "Score" in results_df.columns:
                 index=False
             )
 
-            workbook = writer.book
             worksheet = writer.sheets["SmartMoney"]
 
             # =================================================
@@ -536,7 +554,10 @@ if not results_df.empty and "Score" in results_df.columns:
                                 str(cell.value)
                             )
 
-                    except:
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
                         pass
 
                 adjusted_width = max_length + 3
@@ -557,4 +578,4 @@ else:
     print("NO SE GENERARON RESULTADOS")
     print("Revisa conexión, tickers o Yahoo Finance")
     print("=" * 80)
-
+    

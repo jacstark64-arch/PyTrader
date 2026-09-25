@@ -1,7 +1,7 @@
 #*******************************************************************
 #
 #            31/07/2026
-#            PyTrader V4
+#            PyTrader V5
 #
 #***********************************************************
 import sys
@@ -121,8 +121,8 @@ def resource_path(filename):
 UI_FILE = resource_path("F_Trader_4.ui")
 
 DELAY_BETWEEN_REQUESTS = 1
-TXT_FILE = "Mi_Lista.txt"
-MIN_SCORE_TO_DISPLAY = 60
+TXT_FILE = "Mi_Screener.txt"
+MIN_SCORE_TO_DISPLAY = 70
 DEFAULT_RESULT_HEADERS = [
     "Ticker",
     "Precio",
@@ -701,7 +701,7 @@ class OptionsDialog(QDialog):
         self.interval.setEditable(True)
 
         self.delay = QDoubleSpinBox()
-        self.delay.setRange(0, 60)
+        self.delay.setRange(0, 70)
         self.delay.setDecimals(1)
         self.delay.setSuffix(" s")
 

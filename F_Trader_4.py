@@ -72,7 +72,6 @@ except ImportError:
 
 PERIOD = "1y"
 INTERVAL = "1d"
-
 RSI_PERIOD = 14
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30

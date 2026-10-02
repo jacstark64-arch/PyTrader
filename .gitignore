@@ -1,0 +1,4 @@
+build/
+dist/
+node_modules/
+tests/__pycache__/

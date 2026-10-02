@@ -4,3 +4,8 @@ F_Trader_4_ui.py
 Graficos.py
 Graficos_2.py
 Graficos_3.py
+Screener.txt
+build/
+dist/
+node_modules/
+tests/__pycache__/

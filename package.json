@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "PyTrader converted to Electron + Node.js core indicators",
   "main": "main.js",
+  "bin": {
+    "pytrader-web": "cli/pytrader-web.js"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",

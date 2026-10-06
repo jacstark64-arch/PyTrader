@@ -1,0 +1,114 @@
+const PERIODS = new Set(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max']);
+const INTERVALS = new Set(['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w', '1mo']);
+
+function loadDependencies() {
+  const yf = require('yahoo-finance2').default;
+  const { calculateIndicators } = require('../src/F_Trader_4');
+  return { yf, calculateIndicators };
+}
+
+function normalizeAnalyzeRequest(input = {}) {
+  if (!input || !Array.isArray(input.tickers) || input.tickers.length === 0) {
+    throw new Error('Debe proporcionar al menos un ticker válido.');
+  }
+
+  const tickers = input.tickers
+    .map((ticker) => String(ticker).trim().toUpperCase())
+    .filter(Boolean);
+
+  if (tickers.length === 0 || new Set(tickers).size !== tickers.length) {
+    throw new Error('Debe proporcionar uno o más tickers válidos.');
+  }
+
+  const period = String(input.period || '1y');
+  const interval = String(input.interval || '1d');
+  if (!PERIODS.has(period)) throw new Error('El periodo no es válido.');
+  if (!INTERVALS.has(interval)) throw new Error('El intervalo no es válido.');
+
+  return { tickers, period, interval };
+}
+
+function serializeAnalysisResult(ticker, result) {
+  return {
+    ticker,
+    result: result ? {
+      date: result.date,
+      close: result.close,
+      signal: result.signal,
+      score: result.score,
+      trend: result.trendUp ? 'ALCISTA' : 'DESCENTA',
+      cfi: result.cfi,
+      flow: result.flowSmooth,
+      rsi: result.rsi,
+      macd: result.macd,
+      macdSignal: result.macdSignal,
+      per: result.per,
+      adx: result.adx,
+      vwap: result.vwap,
+      volume: result.volume,
+    } : null,
+  };
+}
+
+function buildAnalysisResponse(ticker, ohlcv, options = {}) {
+  if (!Array.isArray(ohlcv) || ohlcv.length === 0) {
+    return { ticker, error: 'Sin datos disponibles.' };
+  }
+
+  const { calculateIndicators } = loadDependencies();
+  const normalized = ohlcv.map((row) => ({
+    date: row.date,
+    open: Number(row.open),
+    high: Number(row.high),
+    low: Number(row.low),
+    close: Number(row.close),
+    volume: Number(row.volume || 0),
+  }));
+
+  const result = calculateIndicators(normalized, {
+    rsiPeriod: Number(options.rsiPeriod || 14),
+    macdFast: Number(options.macdFast || 12),
+    macdSlow: Number(options.macdSlow || 26),
+    macdSignal: Number(options.macdSignal || 9),
+    perMax: Number(options.perMax || 25),
+    adxPeriod: Number(options.adxPeriod || 14),
+  }).at(-1);
+
+  return serializeAnalysisResult(ticker, result);
+}
+
+async function analyzeTickers(input) {
+  const request = normalizeAnalyzeRequest(input);
+  const { yf } = loadDependencies();
+  const results = [];
+
+  for (const ticker of request.tickers) {
+    try {
+      const history = await yf.historical(ticker, {
+        period: request.period,
+        interval: request.interval,
+      });
+      const rows = (history || []).map((row) => ({
+        date: row.date,
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+        volume: row.volume,
+      })).reverse();
+
+      results.push(buildAnalysisResponse(ticker, rows, request));
+    } catch (error) {
+      results.push({ ticker, error: error.message || 'No se pudieron analizar los datos.' });
+    }
+  }
+
+  return results;
+}
+
+module.exports = {
+  analyzeTickers,
+  buildAnalysisResponse,
+  normalizeAnalyzeRequest,
+  serializeAnalysisResult,
+};

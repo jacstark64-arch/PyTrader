@@ -1,0 +1,45 @@
+service: pytrader-web
+frameworkVersion: '4'
+provider:
+  name: aws
+  runtime: nodejs22.x
+  architecture: x86_64
+  region: us-east-1
+functions:
+  analyze:
+    handler: api/handler.analyze
+    events:
+      - httpApi:
+          method: POST
+          path: /api/analyze
+    timeout: 30
+    memorySize: 512
+    package:
+      include:
+        - api/**
+        - src/F_Trader_4.js
+        - package.json
+        - package-lock.json
+        - node_modules/yahoo-finance2/**
+        - node_modules/technicalindicators/**
+  email:
+    handler: api/handler.sendEmailHandler
+    events:
+      - httpApi:
+          method: POST
+          path: /api/email
+    timeout: 30
+    memorySize: 256
+    package:
+      include:
+        - api/**
+        - package.json
+        - package-lock.json
+        - node_modules/nodemailer/**
+    environment:
+      SMTP_HOST: ${env:SMTP_HOST, ''}
+      SMTP_PORT: ${env:SMTP_PORT, '587'}
+      SMTP_SECURE: ${env:SMTP_SECURE, '0'}
+      SMTP_USER: ${env:SMTP_USER, ''}
+      SMTP_PASSWORD: ${env:SMTP_PASSWORD, ''}
+      SMTP_FROM: ${env:SMTP_FROM, ''}

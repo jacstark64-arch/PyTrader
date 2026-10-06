@@ -100,7 +100,7 @@ A_PUNTO_MIN_SCORE = 70
 FAILED_TICKERS_FILE = "No_Analizados.txt"
 
 
-def load_env_file(path):
+def load_env_file(path: Path) -> None:
     if not path.exists():
         return
 
@@ -119,7 +119,7 @@ def load_env_file(path):
 load_env_file(APP_DIR / ".env")
 
 
-def resource_path(filename):
+def resource_path(filename: str) -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys._MEIPASS) / filename  # pylint: disable=protected-access
     return APP_DIR / filename
@@ -246,7 +246,7 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
     # Sufijos comunes para exchanges europeos (se intentan si no vienen en el ticker)
     eu_suffixes = [
         ".MC", ".PA", ".L", ".DE", ".F", ".AS", ".MI", ".HE", ".ST",
-        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX",
+        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX", ".SSE", "RUS" 
     ]
 
     def try_download(sym):

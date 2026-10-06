@@ -1,6 +1,6 @@
 #*******************************************************************
 #
-#            05/10/2026
+#            31/07/2026
 #            PyTrader V5
 #
 #***********************************************************
@@ -88,16 +88,9 @@ ADX_THRESHOLD = 20
 ADX_WEIGHT = 5
 VWAP_WEIGHT = 5
 
-EXPORT_EXCEL = False
+EXPORT_EXCEL = True
 EXCEL_NAME = "SmartMoney_Screener.xlsx"
 APP_DIR = Path(__file__).resolve().parent
-
-# Conserva la notacion original MERCADO:TICKER para poder reconstruir
-# las listas de salida exactamente en el formato de TradingView.
-ORIGINAL_TICKER_MAP = {}
-A_PUNTO_FILE = "Mi_Screener.txt"
-A_PUNTO_MIN_SCORE = 70
-FAILED_TICKERS_FILE = "No_Analizados.txt"
 
 
 def load_env_file(path):
@@ -282,18 +275,11 @@ def load_tickers(filename):
     tickers = []
 
     for item in content.replace(";", ",").replace("\n", ",").split(","):
-        original = item.strip().upper()
-        if not original or original.startswith("###"):
+        item = item.strip()
+        if not item:
             continue
-
-        normalized = normalize_ticker(original)
-        if not normalized:
-            continue
-
-        # Guardamos la primera notacion original encontrada.
-        # Ej.: NYSE:HPE -> HPE, pero para A_Punto.txt conservamos NYSE:HPE.
-        ORIGINAL_TICKER_MAP.setdefault(normalized, original)
-        tickers.append(normalized)
+        item = normalize_ticker(item)
+        tickers.append(item)
 
     return [ticker for ticker in tickers if ticker]
 
@@ -960,7 +946,6 @@ class AnalysisThread(QThread):
     def __init__(self, tickers):
         super().__init__()
         self.tickers = tickers
-        self.failed_tickers = []
         self._stop_requested = False
 
     def request_stop(self):
@@ -983,7 +968,6 @@ class AnalysisThread(QThread):
                 return
 
             if stock_data is None:
-                self.failed_tickers.append(ticker)
                 self.progress.emit(error_msg)
                 continue
 
@@ -1038,59 +1022,11 @@ class AnalysisThread(QThread):
                 results.append(result)
                 self.result_ready.emit(result)
             except Exception as exc:
-                self.failed_tickers.append(ticker)
                 self.progress.emit(f"Error procesando {ticker}: {exc}")
 
             time.sleep(DELAY_BETWEEN_REQUESTS)
 
         self.finished.emit(results)
-
-
-def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
-    """
-    Crea A_Punto.txt con los valores cuyo Score sea estrictamente superior
-    a min_score, conservando el formato TradingView:
-        NASDAQ:GNTX,NYSE:HPE,LSE:IES,...
-    """
-    selected = [
-        row for row in results
-        if int(row.get("Score", 0)) > min_score
-    ]
-
-    symbols = []
-    seen = set()
-
-    for row in selected:
-        normalized = str(row.get("Ticker", "")).strip().upper()
-        if not normalized:
-            continue
-
-        # Preferir la notacion original de la lista.
-        tv_symbol = ORIGINAL_TICKER_MAP.get(normalized, "")
-        if not tv_symbol:
-            tv_symbol = build_tradingview_symbol(normalized)
-
-        tv_symbol = tv_symbol.strip().upper()
-        if tv_symbol and tv_symbol not in seen:
-            seen.add(tv_symbol)
-            symbols.append(tv_symbol)
-
-    output_path = Path(filename)
-    with open(output_path, "w", encoding="utf-8", newline="") as file:
-        file.write(",".join(symbols))
-        if symbols:
-            file.write("\n")
-
-    return output_path, len(symbols)
-
-
-def export_unanalyzed_tickers(tickers, filename=FAILED_TICKERS_FILE):
-    values = list(dict.fromkeys(
-        str(ticker).strip() for ticker in tickers if str(ticker).strip()
-    ))
-    output_path = Path(filename)
-    output_path.write_text("\n".join(values) + ("\n" if values else ""), encoding="utf-8")
-    return output_path, len(values)
 
 
 class MainWindow(QMainWindow):
@@ -1153,8 +1089,6 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.clicked.connect(self.on_b_carpeta)
         self.B_Ticker.clicked.connect(self.on_b_analizar)
         self.B_Cancelar.clicked.connect(self.on_b_cancelar)
-        self.B_Reiniciar.clicked.connect(self.on_b_reiniciar)
-        self.B_Reiniciar.setEnabled(False)
         self.B_Borrar = getattr(self, "B_Borrar", None)
         if self.B_Borrar is None:
             self.B_Borrar = self.B_LimpiarResultados
@@ -1950,12 +1884,8 @@ class MainWindow(QMainWindow):
             for p in parts:
                 if not p:
                     continue
-                original = p.strip().upper()
-                if original.startswith("###"):
-                    continue
-                p = normalize_ticker(original)
+                p = normalize_ticker(p)
                 if p:
-                    ORIGINAL_TICKER_MAP.setdefault(p, original)
                     combined.append(p)
 
         # eliminar duplicados preservando orden
@@ -1997,7 +1927,6 @@ class MainWindow(QMainWindow):
         show_current_results=False,
     ):
         self._stop_loop_timer()
-        self.current_tickers = list(tickers)
         self.analysis_clear_results = clear_results
         self.analysis_replace_results = replace_results
         self.analysis_show_current_results = show_current_results
@@ -2009,7 +1938,6 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.setEnabled(False)
         self.B_Ticker.setEnabled(False)
         self.B_Cancelar.setEnabled(True)
-        self.B_Reiniciar.setEnabled(False)
 
         self.analysis_thread = AnalysisThread(tickers)
         self.analysis_thread.progress.connect(self.append_to_visor)
@@ -2150,20 +2078,10 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.setEnabled(True)
         self.B_Ticker.setEnabled(True)
         self.B_Cancelar.setEnabled(False)
-        self.B_Reiniciar.setEnabled(bool(self.current_tickers))
         self._schedule_next_timed_analysis()
 
         self.analysis_replace_results = False
         self.analysis_show_current_results = False
-
-        try:
-            failed_tickers = getattr(self.analysis_thread, "failed_tickers", [])
-            failed_path, failed_count = export_unanalyzed_tickers(failed_tickers)
-            self.append_to_visor(
-                f"Valores no analizados: {failed_count} -> {failed_path}"
-            )
-        except Exception as exc:
-            self.append_to_visor(f"Error creando {FAILED_TICKERS_FILE}: {exc}")
 
         result_keys = {
             (row.get("Ticker"), row.get("Fecha"))
@@ -2176,26 +2094,8 @@ class MainWindow(QMainWindow):
                 self._add_result_to_table(row)
                 result_keys.add(key)
 
-        try:
-            a_punto_path, a_punto_count = export_a_punto(self.cumulative_results)
-            self.append_to_visor(
-                f"A_Punto.txt creado: {a_punto_count} valores con Score > "
-                f"{A_PUNTO_MIN_SCORE} -> {a_punto_path}"
-            )
-        except Exception as exc:
-            self.append_to_visor(f"Error creando A_Punto.txt: {exc}")
-
         if not results and not self.cumulative_results:
             self.append_to_visor("No se generaron resultados.")
-            if EXPORT_EXCEL:
-                empty_export_path = Path(EXCEL_NAME).with_suffix(".txt")
-                try:
-                    empty_export_path.write_text("", encoding="utf-8")
-                    self.append_to_visor(
-                        f"Lista TradingView exportada: {empty_export_path} (sin resultados)"
-                    )
-                except Exception as exc:
-                    self.append_to_visor(f"Error exportando lista .txt: {exc}")
             return
 
         if not self.cumulative_results:
@@ -2433,16 +2333,6 @@ class MainWindow(QMainWindow):
             self.analysis_thread.request_stop()
             self.append_to_visor("Cancelando análisis...")
             self.B_Cancelar.setEnabled(False)
-
-    def on_b_reiniciar(self):
-        if self.analysis_thread and self.analysis_thread.isRunning():
-            return
-        if not self.current_tickers:
-            return
-
-        tickers = list(self.current_tickers)
-        self.append_to_visor("Reiniciando análisis desde el principio...")
-        self.start_analysis(tickers, clear_results=True, replace_results=True)
 
 
 if __name__ == "__main__":

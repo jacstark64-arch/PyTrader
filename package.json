@@ -6,7 +6,10 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dev": "electron ."
+    "dev": "electron .",
+    "web": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "test:web": "node --test tests/web-api.test.js"
   },
   "dependencies": {
     "technicalindicators": "^3.0.8",

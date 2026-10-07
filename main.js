@@ -36,7 +36,8 @@ ipcMain.handle('analyze', async (event, tickers, options) => {
   for (const ticker of tickers) {
     try {
       const params = { period: options.period || '1y', interval: options.interval || '1d' };
-      const hist = await yf.historical(ticker, params);
+      const { fetchYahooHistory } = require('./src/yahoo-history-options');
+      const hist = await fetchYahooHistory(yf, ticker, params.period, params.interval);
       if (!hist || hist.length === 0) {
         results.push({ ticker, error: 'Sin datos' });
         continue;

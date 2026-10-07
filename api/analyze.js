@@ -1,5 +1,6 @@
 const PERIODS = new Set(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max']);
 const INTERVALS = new Set(['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w', '1mo']);
+const { fetchYahooHistory, isYahooRateLimitError } = require('../src/yahoo-history-options');
 
 function loadDependencies() {
   const yf = require('yahoo-finance2').default;
@@ -84,10 +85,7 @@ async function analyzeTickers(input) {
 
   for (const ticker of request.tickers) {
     try {
-      const history = await yf.historical(ticker, {
-        period: request.period,
-        interval: request.interval,
-      });
+      const history = await fetchYahooHistory(yf, ticker, request.period, request.interval);
       const rows = (history || []).map((row) => ({
         date: row.date,
         open: row.open,
@@ -99,7 +97,12 @@ async function analyzeTickers(input) {
 
       results.push(buildAnalysisResponse(ticker, rows, request));
     } catch (error) {
-      results.push({ ticker, error: error.message || 'No se pudieron analizar los datos.' });
+      results.push({
+        ticker,
+        error: isYahooRateLimitError(error)
+          ? 'Yahoo Finance limitó las solicitudes. Espera unos minutos antes de volver a intentarlo.'
+          : error.message || 'No se pudieron analizar los datos.',
+      });
     }
   }
 

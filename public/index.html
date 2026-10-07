@@ -23,6 +23,15 @@
         <label for="tickers">Tickers</label>
         <textarea id="tickers" rows="2" placeholder="AAPL, MSFT, NVDA">AAPL, MSFT</textarea>
       </div>
+      <div class="list-import field-wide">
+        <div class="list-import-actions">
+          <input id="listFiles" class="file-input" type="file" accept=".txt,text/plain" multiple>
+          <label class="file-button secondary-button" for="listFiles">Abrir listas .txt</label>
+          <input id="listFolder" class="file-input" type="file" accept=".txt,text/plain" webkitdirectory multiple>
+          <label class="file-button secondary-button" for="listFolder">Abrir carpeta</label>
+        </div>
+        <p id="listStatus" role="status">Selecciona uno o varios archivos .txt, o una carpeta con listas.</p>
+      </div>
       <div class="field">
         <label for="period">Periodo</label>
         <select id="period">

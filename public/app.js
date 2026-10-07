@@ -5,12 +5,48 @@ const filterText = document.querySelector('#filterText');
 const filterScore = document.querySelector('#filterScore');
 const emailForm = document.querySelector('#emailForm');
 const healthStatus = document.querySelector('#healthStatus');
+const listFilesInput = document.querySelector('#listFiles');
+const listFolderInput = document.querySelector('#listFolder');
+const listStatus = document.querySelector('#listStatus');
 
 let lastResults = [];
+
+function normalizeListTicker(value) {
+  const ticker = value.trim().toUpperCase();
+  if (!ticker) return '';
+
+  const exchangeSuffixes = {
+    BME: '.MC', BM: '.MC', MC: '.MC', EPA: '.PA', PAR: '.PA', LON: '.L', LSE: '.L',
+    XETR: '.DE', ETR: '.DE', FRA: '.F', MIL: '.MI', BIT: '.MI', AMS: '.AS', HEL: '.HE',
+    STO: '.ST', SWX: '.SW', SIX: '.SW', OSL: '.OL', CPH: '.CO', BRU: '.BR', LIS: '.LS', VIE: '.VI',
+  };
+  const separator = ticker.indexOf(':');
+  if (separator >= 0) {
+    const exchange = ticker.slice(0, separator);
+    const symbol = ticker.slice(separator + 1).trim().replaceAll(' ', '').replaceAll('/', '-');
+    if (!symbol) return '';
+    const suffix = exchangeSuffixes[exchange];
+    return suffix && !symbol.includes('.') ? `${symbol}${suffix}` : symbol;
+  }
+
+  return ticker.replaceAll(' ', '').replaceAll('/', '-');
+}
 
 function setStatus(message, type = '') {
   statusMessage.textContent = message;
   statusMessage.className = `message ${type}`.trim();
+}
+
+async function readJsonResponse(response) {
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch {
+    if (response.status === 429 || /too many requests/i.test(body)) {
+      throw new Error('Yahoo Finance ha limitado las solicitudes. Espera unos minutos y vuelve a intentarlo.');
+    }
+    throw new Error(`El servidor devolvió una respuesta no válida (${response.status}).`);
+  }
 }
 
 function escapeHtml(value) {
@@ -92,7 +128,7 @@ async function analyze() {
         interval: document.querySelector('#interval').value,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse(response);
     if (!response.ok || !payload.success) throw new Error(payload.error || 'No se pudo analizar.');
 
     lastResults = payload.results;
@@ -105,6 +141,42 @@ async function analyze() {
   } finally {
     analyzeButton.disabled = false;
     analyzeButton.textContent = 'Analizar tickers';
+  }
+}
+
+async function importLists(fileList) {
+  const files = [...fileList]
+    .filter((file) => file.name.toLowerCase().endsWith('.txt'))
+    .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name));
+
+  if (files.length === 0) {
+    listStatus.textContent = 'No se encontraron archivos .txt.';
+    setStatus('Selecciona al menos un archivo .txt.', 'error');
+    return;
+  }
+
+  try {
+    const contents = await Promise.all(files.map((file) => file.text()));
+    const tickers = [...new Set(contents.flatMap((content) => content
+      .replaceAll(';', ',')
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter((item) => item && !item.startsWith('###'))
+      .map(normalizeListTicker)
+      .filter(Boolean)))];
+
+    if (tickers.length === 0) {
+      listStatus.textContent = `${files.length} lista${files.length === 1 ? '' : 's'} cargada${files.length === 1 ? '' : 's'}, sin tickers válidos.`;
+      setStatus('No se encontraron tickers en las listas seleccionadas.', 'error');
+      return;
+    }
+
+    document.querySelector('#tickers').value = tickers.join(', ');
+    listStatus.textContent = `${files.length} archivo${files.length === 1 ? '' : 's'} cargado${files.length === 1 ? '' : 's'}; ${tickers.length} ticker${tickers.length === 1 ? '' : 's'} únicos.`;
+    await analyze();
+  } catch {
+    listStatus.textContent = 'No se pudieron leer las listas seleccionadas.';
+    setStatus('Error al leer los archivos de listas.', 'error');
   }
 }
 
@@ -126,7 +198,7 @@ emailForm.addEventListener('submit', async (event) => {
         results,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse(response);
     if (!response.ok) throw new Error(payload.error || 'No se pudo enviar el correo.');
     setStatus(payload.message, 'success');
   } catch (error) {
@@ -138,6 +210,8 @@ emailForm.addEventListener('submit', async (event) => {
 });
 
 analyzeButton.addEventListener('click', analyze);
+listFilesInput.addEventListener('change', () => importLists(listFilesInput.files));
+listFolderInput.addEventListener('change', () => importLists(listFolderInput.files));
 filterText.addEventListener('input', renderResults);
 filterScore.addEventListener('input', renderResults);
 checkHealth();

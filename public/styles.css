@@ -29,6 +29,12 @@ button { cursor: pointer; }
 .controls-panel { display: grid; grid-template-columns: minmax(240px, 2fr) minmax(160px, 1fr) minmax(160px, 1fr) auto; gap: 16px; align-items: end; padding: 22px; margin-bottom: 20px; }
 .field { display: grid; gap: 8px; }
 .field-wide { grid-column: span 1; }
+.list-import { grid-column: 1 / -1; }
+.list-import-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+.file-input:focus-visible + .file-button, .file-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.file-button { display: inline-flex; align-items: center; min-height: 42px; cursor: pointer; }
+.list-import p { margin: 8px 0 0; color: var(--muted); font-size: 0.82rem; }
 label { color: var(--muted); font-size: 0.82rem; font-weight: 700; }
 input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: 10px; outline: none; background: #0b1727; color: var(--text); padding: 11px 12px; transition: border-color 0.2s, box-shadow 0.2s; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12); }

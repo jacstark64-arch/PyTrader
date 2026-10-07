@@ -7,9 +7,18 @@ const emailForm = document.querySelector('#emailForm');
 const healthStatus = document.querySelector('#healthStatus');
 const listFilesInput = document.querySelector('#listFiles');
 const listFolderInput = document.querySelector('#listFolder');
-const listStatus = document.querySelector('#listStatus');
+const listsView = document.querySelector('#listsView');
+const activityPanel = document.querySelector('#activityPanel');
+const activityState = document.querySelector('#activityState');
+const activityMessage = document.querySelector('#activityMessage');
+const currentTicker = document.querySelector('#currentTicker');
+const analysisProgress = document.querySelector('#analysisProgress');
+const progressLabel = document.querySelector('#progressLabel');
+const stopAnalysisButton = document.querySelector('#stopAnalysisButton');
 
 let lastResults = [];
+let loadedTickers = [];
+let stopRequested = false;
 
 function normalizeListTicker(value) {
   const ticker = value.trim().toUpperCase();
@@ -104,43 +113,99 @@ async function checkHealth() {
 }
 
 async function analyze() {
-  const tickers = document.querySelector('#tickers').value
-    .split(/[\n,;]+/)
-    .map((value) => value.trim().toUpperCase())
-    .filter(Boolean);
+  const tickers = [...loadedTickers];
 
   if (tickers.length === 0) {
-    setStatus('Introduce al menos un ticker.', 'error');
+    setStatus('Carga al menos una lista .txt.', 'error');
     return;
   }
 
   analyzeButton.disabled = true;
-  analyzeButton.textContent = 'Analizando…';
-  setStatus('Descargando datos y calculando indicadores…');
+  stopAnalysisButton.disabled = false;
+  listFilesInput.disabled = true;
+  listFolderInput.disabled = true;
+  stopRequested = false;
+  analyzeButton.textContent = 'Analizando...';
+  activityPanel.classList.add('is-active');
+  activityState.textContent = 'En curso';
+  currentTicker.textContent = 'Preparando';
+  activityMessage.textContent = 'Iniciando análisis de las listas.';
+  analysisProgress.max = tickers.length;
+  analysisProgress.value = 0;
+  progressLabel.textContent = `0 / ${tickers.length}`;
+  setStatus('Analizando las listas cargadas...');
 
   try {
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tickers,
-        period: document.querySelector('#period').value,
-        interval: document.querySelector('#interval').value,
-      }),
-    });
-    const payload = await readJsonResponse(response);
-    if (!response.ok || !payload.success) throw new Error(payload.error || 'No se pudo analizar.');
+    for (const [index, ticker] of tickers.entries()) {
+      if (stopRequested) break;
 
-    lastResults = payload.results;
-    renderResults();
-    setStatus(`Análisis finalizado para ${tickers.length} ticker${tickers.length === 1 ? '' : 's'}.`, 'success');
+      currentTicker.textContent = ticker;
+      activityMessage.textContent = `Analizando acción ${index + 1} de ${tickers.length}.`;
+      progressLabel.textContent = `${index} / ${tickers.length}`;
+
+      try {
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tickers: [ticker],
+            period: document.querySelector('#period').value,
+            interval: document.querySelector('#interval').value,
+          }),
+        });
+        const payload = await readJsonResponse(response);
+        if (!response.ok || !payload.success) throw new Error(payload.error || 'No se pudo analizar.');
+        mergeResults(payload.results);
+      } catch (error) {
+        mergeResults([{ ticker, error: error.message || 'No se pudo analizar.' }]);
+      }
+
+      analysisProgress.value = index + 1;
+      progressLabel.textContent = `${index + 1} / ${tickers.length}`;
+      renderResults();
+      if (stopRequested) break;
+    }
+
+    const stopped = stopRequested && analysisProgress.value < tickers.length;
+    if (stopped) {
+      activityState.textContent = 'Detenido';
+      activityMessage.textContent = `Análisis detenido. Se conservaron ${lastResults.length} resultados.`;
+      setStatus(`Análisis detenido tras ${analysisProgress.value} de ${tickers.length} acciones. Resultados conservados.`);
+    } else {
+      currentTicker.textContent = tickers[tickers.length - 1];
+      activityState.textContent = 'Finalizado';
+      activityMessage.textContent = `Análisis terminado para ${tickers.length} acciones.`;
+      setStatus(`Análisis finalizado para ${tickers.length} ticker${tickers.length === 1 ? '' : 's'}.`, 'success');
+    }
   } catch (error) {
+    activityState.textContent = 'Error';
+    activityMessage.textContent = error.message || 'Error durante el análisis.';
     setStatus(error.message || 'Error al analizar.', 'error');
-    lastResults = [];
-    renderResults();
   } finally {
+    activityPanel.classList.remove('is-active');
+    listFilesInput.disabled = false;
+    listFolderInput.disabled = false;
     analyzeButton.disabled = false;
-    analyzeButton.textContent = 'Analizar tickers';
+    stopAnalysisButton.disabled = true;
+    analyzeButton.textContent = 'Analizar listas';
+  }
+}
+
+function mergeResults(results) {
+  for (const result of results) {
+    const existingIndex = lastResults.findIndex((item) => item.ticker === result.ticker);
+    if (existingIndex === -1) lastResults.push(result);
+    else lastResults[existingIndex] = result;
+  }
+}
+
+function renderListFiles(files) {
+  listsView.replaceChildren();
+  for (const file of files) {
+    const item = document.createElement('li');
+    item.textContent = file.name;
+    item.title = file.name;
+    listsView.append(item);
   }
 }
 
@@ -150,11 +215,16 @@ async function importLists(fileList) {
     .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name));
 
   if (files.length === 0) {
-    listStatus.textContent = 'No se encontraron archivos .txt.';
+    loadedTickers = [];
+    renderListFiles([]);
+    analyzeButton.disabled = true;
+    activityState.textContent = 'En espera';
+    activityMessage.textContent = 'No se encontraron archivos .txt.';
     setStatus('Selecciona al menos un archivo .txt.', 'error');
     return;
   }
 
+  renderListFiles(files);
   try {
     const contents = await Promise.all(files.map((file) => file.text()));
     const tickers = [...new Set(contents.flatMap((content) => content
@@ -166,16 +236,25 @@ async function importLists(fileList) {
       .filter(Boolean)))];
 
     if (tickers.length === 0) {
-      listStatus.textContent = `${files.length} lista${files.length === 1 ? '' : 's'} cargada${files.length === 1 ? '' : 's'}, sin tickers válidos.`;
+      loadedTickers = [];
+      analyzeButton.disabled = true;
+      activityState.textContent = 'En espera';
+      activityMessage.textContent = 'Las listas no contienen acciones válidas.';
       setStatus('No se encontraron tickers en las listas seleccionadas.', 'error');
       return;
     }
 
-    document.querySelector('#tickers').value = tickers.join(', ');
-    listStatus.textContent = `${files.length} archivo${files.length === 1 ? '' : 's'} cargado${files.length === 1 ? '' : 's'}; ${tickers.length} ticker${tickers.length === 1 ? '' : 's'} únicos.`;
+    loadedTickers = tickers;
+    analyzeButton.disabled = false;
+    activityState.textContent = 'Preparado';
+    activityMessage.textContent = `${tickers.length} acciones listas para analizar.`;
+    setStatus(`Listas cargadas: ${tickers.length} acciones únicas.`, 'success');
     await analyze();
   } catch {
-    listStatus.textContent = 'No se pudieron leer las listas seleccionadas.';
+    loadedTickers = [];
+    analyzeButton.disabled = true;
+    activityState.textContent = 'Error';
+    activityMessage.textContent = 'No se pudieron leer las listas seleccionadas.';
     setStatus('Error al leer los archivos de listas.', 'error');
   }
 }
@@ -210,6 +289,15 @@ emailForm.addEventListener('submit', async (event) => {
 });
 
 analyzeButton.addEventListener('click', analyze);
+stopAnalysisButton.addEventListener('click', () => {
+  if (analyzeButton.disabled) {
+    stopRequested = true;
+    stopAnalysisButton.disabled = true;
+    activityState.textContent = 'Deteniendo';
+    activityMessage.textContent = `Se detendrá al terminar ${currentTicker.textContent}.`;
+    setStatus('Deteniendo el análisis; se conservarán los resultados.');
+  }
+});
 listFilesInput.addEventListener('change', () => importLists(listFilesInput.files));
 listFolderInput.addEventListener('change', () => importLists(listFolderInput.files));
 filterText.addEventListener('input', renderResults);

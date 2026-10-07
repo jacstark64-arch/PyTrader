@@ -18,20 +18,45 @@
       <div class="status-pill" id="healthStatus"><span></span> Comprobando servicio</div>
     </header>
 
-    <section class="panel controls-panel">
-      <div class="field field-wide">
-        <label for="tickers">Tickers</label>
-        <textarea id="tickers" rows="2" placeholder="AAPL, MSFT, NVDA">AAPL, MSFT</textarea>
-      </div>
-      <div class="list-import field-wide">
-        <div class="list-import-actions">
-          <input id="listFiles" class="file-input" type="file" accept=".txt,text/plain" multiple>
-          <label class="file-button secondary-button" for="listFiles">Abrir listas .txt</label>
-          <input id="listFolder" class="file-input" type="file" accept=".txt,text/plain" webkitdirectory multiple>
-          <label class="file-button secondary-button" for="listFolder">Abrir carpeta</label>
+    <section class="workspace-panels">
+      <section class="panel list-panel" aria-labelledby="listHeading">
+        <div class="work-panel-heading">
+          <div>
+            <p class="eyebrow">Archivos seleccionados</p>
+            <h2 id="listHeading">LISTAS</h2>
+          </div>
+          <div class="list-import-actions">
+            <input id="listFiles" class="file-input" type="file" accept=".txt,text/plain" multiple>
+            <label class="file-button secondary-button" for="listFiles">Abrir archivos</label>
+            <input id="listFolder" class="file-input" type="file" accept=".txt,text/plain" webkitdirectory multiple>
+            <label class="file-button secondary-button" for="listFolder">Abrir carpeta</label>
+          </div>
         </div>
-        <p id="listStatus" role="status">Selecciona uno o varios archivos .txt, o una carpeta con listas.</p>
-      </div>
+        <ul id="listsView" class="lists-view" aria-live="polite">
+          <li class="empty-list">Sin listas cargadas</li>
+        </ul>
+      </section>
+
+      <section id="activityPanel" class="panel activity-panel" aria-labelledby="activityHeading">
+        <div class="work-panel-heading">
+          <div>
+            <p class="eyebrow">Estado del análisis</p>
+            <h2 id="activityHeading">Actividad</h2>
+          </div>
+          <div id="activityIndicator" class="activity-indicator">
+            <span></span><strong id="activityState">En espera</strong>
+          </div>
+        </div>
+        <output id="currentTicker" class="current-ticker">—</output>
+        <p id="activityMessage" class="activity-message">Selecciona una lista para comenzar.</p>
+        <div class="progress-row">
+          <progress id="analysisProgress" value="0" max="1"></progress>
+          <span id="progressLabel">0 / 0</span>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel controls-panel">
       <div class="field">
         <label for="period">Periodo</label>
         <select id="period">
@@ -53,7 +78,10 @@
           <option value="15m">15 minutos</option>
         </select>
       </div>
-      <button class="primary-button" id="analyzeButton">Analizar tickers</button>
+      <div class="analysis-actions">
+        <button class="primary-button" id="analyzeButton" disabled>Analizar listas</button>
+        <button class="stop-button" id="stopAnalysisButton" type="button" disabled>Detener</button>
+      </div>
     </section>
 
     <section class="panel results-panel">
@@ -75,7 +103,7 @@
             </tr>
           </thead>
           <tbody id="resultsBody">
-            <tr><td colspan="9" class="empty-state">Introduce tickers y pulsa analizar.</td></tr>
+            <tr><td colspan="9" class="empty-state">Carga una lista para iniciar el análisis.</td></tr>
           </tbody>
         </table>
       </div>

@@ -15,7 +15,7 @@ const REQUEST_INTERVAL_MS = 500;
 let requestQueue = Promise.resolve();
 
 function toYahooHistoryOptions(period, interval, now = Date.now()) {
-  const duration = PERIOD_DURATIONS[period] ?? PERIOD_DURATIONS['1y'];
+  const duration = PERIOD_DURATIONS[period];
   return {
     period1: duration === null ? new Date(0) : new Date(now - duration),
     interval: interval === '1w' ? '1wk' : interval,

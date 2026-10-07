@@ -15,6 +15,27 @@ const currentTicker = document.querySelector('#currentTicker');
 const analysisProgress = document.querySelector('#analysisProgress');
 const progressLabel = document.querySelector('#progressLabel');
 const stopAnalysisButton = document.querySelector('#stopAnalysisButton');
+const configDialog = document.querySelector('#configDialog');
+const configForm = document.querySelector('#configForm');
+const configButton = document.querySelector('#configButton');
+const closeConfigButton = document.querySelector('#closeConfigButton');
+const resetConfigButton = document.querySelector('#resetConfigButton');
+const configError = document.querySelector('#configError');
+const configFields = {
+  period: document.querySelector('#configPeriod'),
+  interval: document.querySelector('#configInterval'),
+  rsiPeriod: document.querySelector('#configRsiPeriod'),
+  macdFast: document.querySelector('#configMacdFast'),
+  macdSlow: document.querySelector('#configMacdSlow'),
+  macdSignal: document.querySelector('#configMacdSignal'),
+  adxPeriod: document.querySelector('#configAdxPeriod'),
+  minScore: document.querySelector('#configMinScore'),
+};
+const DEFAULT_CONFIG = Object.freeze({
+  period: '1y', interval: '1d', rsiPeriod: 14, macdFast: 12,
+  macdSlow: 26, macdSignal: 9, adxPeriod: 14, minScore: 0,
+});
+const CONFIG_STORAGE_KEY = 'pytrader-web-config';
 
 let lastResults = [];
 let loadedTickers = [];
@@ -44,6 +65,65 @@ function normalizeListTicker(value) {
 function setStatus(message, type = '') {
   statusMessage.textContent = message;
   statusMessage.className = `message ${type}`.trim();
+}
+
+function getConfig() {
+  const values = Object.fromEntries(Object.entries(configFields).map(([key, field]) => [key, field.value]));
+  return {
+    ...DEFAULT_CONFIG,
+    ...values,
+    rsiPeriod: Number(values.rsiPeriod),
+    macdFast: Number(values.macdFast),
+    macdSlow: Number(values.macdSlow),
+    macdSignal: Number(values.macdSignal),
+    adxPeriod: Number(values.adxPeriod),
+    minScore: Number(values.minScore),
+  };
+}
+
+function applyConfig(config) {
+  const merged = { ...DEFAULT_CONFIG, ...config };
+  for (const [key, field] of Object.entries(configFields)) field.value = merged[key];
+  document.querySelector('#period').value = merged.period;
+  document.querySelector('#interval').value = merged.interval;
+  filterScore.value = merged.minScore;
+  renderResults();
+}
+
+function loadConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY));
+    if (saved && typeof saved === 'object') applyConfig(saved);
+  } catch {
+    applyConfig(DEFAULT_CONFIG);
+  }
+}
+
+function openConfig() {
+  configError.textContent = '';
+  try {
+    applyConfig(JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY) || {}));
+  } catch {
+    applyConfig(DEFAULT_CONFIG);
+  }
+
+  if (typeof configDialog.showModal === 'function') {
+    configDialog.showModal();
+  } else {
+    configDialog.setAttribute('open', '');
+  }
+}
+
+function validateConfig(config) {
+  const errors = [];
+  if (!['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'].includes(config.period)) errors.push('Periodo no válido.');
+  if (!['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w', '1mo'].includes(config.interval)) errors.push('Intervalo no válido.');
+  const periods = ['rsiPeriod', 'macdFast', 'macdSlow', 'macdSignal', 'adxPeriod'];
+  if (periods.some((key) => !Number.isInteger(config[key]) || config[key] < 2 || config[key] > 200)) errors.push('Los períodos deben ser enteros entre 2 y 200.');
+  if (config.macdFast >= config.macdSlow) errors.push('MACD rápido debe ser inferior a MACD lento.');
+  if (config.macdSignal >= config.macdFast) errors.push('MACD señal debe ser inferior a MACD rápido.');
+  if (!Number.isFinite(config.minScore) || config.minScore < 0 || config.minScore > 100) errors.push('Score mínimo debe estar entre 0 y 100.');
+  return errors;
 }
 
 async function readJsonResponse(response) {
@@ -149,8 +229,7 @@ async function analyze() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             tickers: [ticker],
-            period: document.querySelector('#period').value,
-            interval: document.querySelector('#interval').value,
+            ...getConfig(),
           }),
         });
         const payload = await readJsonResponse(response);
@@ -298,8 +377,33 @@ stopAnalysisButton.addEventListener('click', () => {
     setStatus('Deteniendo el análisis; se conservarán los resultados.');
   }
 });
+configButton.addEventListener('click', openConfig);
+closeConfigButton.addEventListener('click', () => configDialog.close());
+configDialog.addEventListener('click', (event) => {
+  if (event.target === configDialog) configDialog.close();
+});
+configForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const config = getConfig();
+  const errors = validateConfig(config);
+  if (errors.length > 0) {
+    configError.textContent = errors.join(' ');
+    return;
+  }
+
+  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+  applyConfig(config);
+  configError.textContent = '';
+  configDialog.close();
+  setStatus('Configuración guardada. Repite el análisis para aplicar los nuevos parámetros.', 'success');
+});
+resetConfigButton.addEventListener('click', () => {
+  applyConfig(DEFAULT_CONFIG);
+  configError.textContent = '';
+});
 listFilesInput.addEventListener('change', () => importLists(listFilesInput.files));
 listFolderInput.addEventListener('change', () => importLists(listFolderInput.files));
 filterText.addEventListener('input', renderResults);
 filterScore.addEventListener('input', renderResults);
+loadConfig();
 checkHealth();

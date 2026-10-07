@@ -32,11 +32,23 @@ test('normalizeAnalyzeRequest accepts a valid request', () => {
     tickers: ['AAPL', 'MSFT'],
     period: '1y',
     interval: '1d',
+    rsiPeriod: 21,
+    macdFast: 8,
+    macdSlow: 21,
+    macdSignal: 5,
+    adxPeriod: 20,
+    minScore: 70,
   });
 
   assert.deepEqual(request.tickers, ['AAPL', 'MSFT']);
   assert.equal(request.period, '1y');
   assert.equal(request.interval, '1d');
+  assert.equal(request.rsiPeriod, 21);
+  assert.equal(request.macdFast, 8);
+  assert.equal(request.macdSlow, 21);
+  assert.equal(request.macdSignal, 5);
+  assert.equal(request.adxPeriod, 20);
+  assert.equal(request.minScore, 70);
 });
 
 test('normalizeAnalyzeRequest rejects invalid input', () => {
@@ -47,6 +59,14 @@ test('normalizeAnalyzeRequest rejects invalid input', () => {
   assert.throws(
     () => normalizeAnalyzeRequest({ tickers: ['AAPL'], period: 'invalid' }),
     /period/i,
+  );
+  assert.throws(
+    () => normalizeAnalyzeRequest({ tickers: ['AAPL'], macdFast: 26, macdSlow: 12 }),
+    /MACD/i,
+  );
+  assert.throws(
+    () => normalizeAnalyzeRequest({ tickers: ['AAPL'], minScore: 101 }),
+    /score/i,
   );
 });
 

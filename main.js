@@ -50,7 +50,7 @@ ipcMain.handle('analyze', async (event, tickers, options) => {
         low: h.low,
         close: h.close,
         volume: h.volume
-      })).reverse();
+      })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
       const augmented = calculateIndicators(ohlcv, options.indicators || {});
       const last = augmented[augmented.length - 1] || null;

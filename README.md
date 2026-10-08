@@ -4,6 +4,27 @@ Aplicacion de escritorio en Python/PyQt6 para analizar tickers con yfinance.
 
 ## Instalar en Windows
 
+Tambien puedes ejecutar `dist/PyTrader-Setup-Windows11.exe` en Windows 11 x64.
+Este instalador incluye Python 3.13.12, descarga las dependencias y construye
+`PyTrader.exe` en `%LOCALAPPDATA%\PyTrader\app\dist`. Crea accesos directos
+en el Escritorio y el menu Inicio. Requiere Internet durante la instalacion;
+el registro queda en `%LOCALAPPDATA%\PyTrader\install.log`.
+Para configurar el correo en esta instalacion, copia `.env.example` como `.env`
+en `%LOCALAPPDATA%\PyTrader\app\dist`, junto a `PyTrader.exe`.
+El arranque de este instalador debe comprobarse en Windows; desde Linux se
+verifica el formato EXE y la integridad del contenido, pero no su ejecucion.
+
+Para regenerar el instalador desde Linux, instala `requirements-dev.txt`,
+extrae `bin/7zSD.sfx` del [LZMA SDK 26.04](https://www.7-zip.org/a/lzma2604.7z)
+y descarga el [instalador oficial Python 3.13.12 x64](https://www.python.org/ftp/python/3.13.12/python-3.13.12-amd64.exe).
+Despues ejecuta:
+
+```bash
+.venv/bin/python build_windows_installer.py \
+  --sfx-file /ruta/bin/7zSD.sfx \
+  --python-installer /ruta/python-3.13.12-amd64.exe
+```
+
 Desde PowerShell, en la carpeta del proyecto:
 
 ```powershell
@@ -100,4 +121,18 @@ El ejecutable queda en:
 
 ```powershell
 dist\PyTrader.exe
+```
+
+Si estas trabajando desde Linux, puedes preparar un paquete para copiar a
+Windows 11 y construir alli el `.exe`:
+
+```bash
+chmod +x package_windows_source.sh
+./package_windows_source.sh
+```
+
+El paquete queda en:
+
+```bash
+dist/PyTrader-windows11-source-installer.zip
 ```

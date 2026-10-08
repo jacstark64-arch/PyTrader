@@ -17,6 +17,29 @@ if (-not (Test-Path $PythonExe)) {
 & $PythonExe -m pip install --upgrade pip
 & $PipExe install -r (Join-Path $AppDir "requirements.txt")
 
+$IconPng = Join-Path $AppDir "lupa-diagrama-negocios.png"
+$IconIco = Join-Path $AppDir "pytrader.ico"
+if ((Test-Path $IconPng) -and (-not (Test-Path $IconIco))) {
+    Add-Type -AssemblyName System.Drawing
+    $SourceBitmap = [System.Drawing.Bitmap]::new($IconPng)
+    $Bitmap = [System.Drawing.Bitmap]::new($SourceBitmap, [System.Drawing.Size]::new(256, 256))
+    $SourceBitmap.Dispose()
+    try {
+        $Icon = [System.Drawing.Icon]::FromHandle($Bitmap.GetHicon())
+        $Stream = [System.IO.File]::Create($IconIco)
+        try {
+            $Icon.Save($Stream)
+        }
+        finally {
+            $Stream.Close()
+            $Icon.Dispose()
+        }
+    }
+    finally {
+        $Bitmap.Dispose()
+    }
+}
+
 @"
 @echo off
 cd /d "$AppDir"
@@ -34,6 +57,9 @@ foreach ($ShortcutPath in @($DesktopShortcut, $StartMenuShortcut)) {
     $Shortcut = $WScript.CreateShortcut($ShortcutPath)
     $Shortcut.TargetPath = $Launcher
     $Shortcut.WorkingDirectory = $AppDir
+    if (Test-Path $IconIco) {
+        $Shortcut.IconLocation = $IconIco
+    }
     $Shortcut.Description = "Smart Money stock screener"
     $Shortcut.Save()
 }

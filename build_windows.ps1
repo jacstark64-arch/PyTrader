@@ -16,12 +16,40 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 
 if (-not (Test-Path $PythonExe)) {
     python -m venv $VenvDir
+    if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el entorno virtual." }
+}
+
+$IconPng = Join-Path $AppDir "lupa-diagrama-negocios.png"
+$IconIco = Join-Path $AppDir "pytrader.ico"
+if ((Test-Path $IconPng) -and (-not (Test-Path $IconIco))) {
+    Add-Type -AssemblyName System.Drawing
+    $SourceBitmap = [System.Drawing.Bitmap]::new($IconPng)
+    $Bitmap = [System.Drawing.Bitmap]::new($SourceBitmap, [System.Drawing.Size]::new(256, 256))
+    $SourceBitmap.Dispose()
+    try {
+        $Icon = [System.Drawing.Icon]::FromHandle($Bitmap.GetHicon())
+        $Stream = [System.IO.File]::Create($IconIco)
+        try {
+            $Icon.Save($Stream)
+        }
+        finally {
+            $Stream.Close()
+            $Icon.Dispose()
+        }
+    }
+    finally {
+        $Bitmap.Dispose()
+    }
 }
 
 & $PythonExe -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "No se pudo actualizar pip." }
 & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
+if ($LASTEXITCODE -ne 0) { throw "No se pudieron instalar las dependencias." }
 & $PythonExe -m pip install -r (Join-Path $AppDir "requirements-build.txt")
+if ($LASTEXITCODE -ne 0) { throw "No se pudo instalar PyInstaller." }
 & $PythonExe -m PyInstaller --clean --noconfirm (Join-Path $AppDir "pytrader.spec")
+if ($LASTEXITCODE -ne 0) { throw "No se pudo construir PyTrader.exe." }
 
 $ExePath = Join-Path $AppDir "dist\PyTrader.exe"
 if (-not (Test-Path $ExePath)) {

@@ -90,7 +90,13 @@ VWAP_WEIGHT = 5
 
 EXPORT_EXCEL = False
 EXCEL_NAME = "SmartMoney_Screener.xlsx"
-APP_DIR = Path(__file__).resolve().parent
+
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(sys._MEIPASS)  # pylint: disable=protected-access
+else:
+    APP_DIR = Path(__file__).resolve().parent
+    BUNDLE_DIR = APP_DIR
 
 # Conserva la notacion original MERCADO:TICKER para poder reconstruir
 # las listas de salida exactamente en el formato de TradingView.
@@ -120,9 +126,7 @@ load_env_file(APP_DIR / ".env")
 
 
 def resource_path(filename: str) -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / filename  # pylint: disable=protected-access
-    return APP_DIR / filename
+    return BUNDLE_DIR / filename
 
 
 UI_FILE = resource_path("F_Trader_4.ui")
@@ -246,7 +250,7 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
     # Sufijos comunes para exchanges europeos (se intentan si no vienen en el ticker)
     eu_suffixes = [
         ".MC", ".PA", ".L", ".DE", ".F", ".AS", ".MI", ".HE", ".ST",
-        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX",
+        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX", ".SSE", ".ME"
     ]
 
     def try_download(sym):
@@ -433,7 +437,7 @@ def get_pe_ratio(ticker):
 
         info = getattr(ticker_obj, "info", None) or {}
         if isinstance(info, dict):
-            for key in ("forwardPE", "trailingPE", "pegRatio"):
+            for key in ("forwardPE", "trailingPE"):
                 value = info.get(key)
                 if value not in (None, 0):
                     return float(value)
@@ -442,11 +446,22 @@ def get_pe_ratio(ticker):
     return None
 
 
+def wilder_average(values, period):
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    valid = values.dropna()
+    if len(valid) < period:
+        return result
+    seeded = valid.iloc[period - 1:].copy()
+    seeded.iloc[0] = valid.iloc[:period].mean()
+    result.loc[seeded.index] = seeded.ewm(alpha=1 / period, adjust=False).mean()
+    return result
+
+
 def calculate_indicators(dataframe, pe_ratio=None, params=None):
     """
     Calcula indicadores Smart Money, CFI, Flow, Tendencia, RSI, MACD, PER y señales.
     """
-    data = dataframe.copy()
+    data = dataframe.sort_index().copy()
     indicator_params = {
         "rsi_period": 14,
         "rsi_overbought": 70,
@@ -498,7 +513,8 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     weekly["cfi_w"] = weekly_cfi_raw.ewm(span=20, adjust=False).mean()
     weekly["cfi_w_ma"] = weekly["cfi_w"].ewm(span=20, adjust=False).mean()
     weekly["cfi_w_up"] = weekly["cfi_w"] > weekly["cfi_w_ma"]
-    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, fill_value=False).ffill()
+    # Only use weeks whose closing label is already available to the session.
+    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, method="ffill").fillna(False)
 
     data["vol_ma"] = data["Volume"].rolling(50).mean()
     data["vol_strong"] = data["Volume"] > data["vol_ma"]
@@ -516,6 +532,7 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     avg_loss = loss.rolling(window=rsi_period, min_periods=rsi_period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     data["rsi"] = 100 - (100 / (1 + rs))
+    data.loc[(avg_loss == 0) & (avg_gain > 0), "rsi"] = 100
     data["rsi"] = data["rsi"].fillna(50)
     data["rsi_bullish"] = (data["rsi"] > 50) & (data["rsi"] > data["rsi"].shift(1))
     data["rsi_oversold"] = data["rsi"] <= rsi_oversold
@@ -531,16 +548,28 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     data["vwap"] = (typical_price * data["Volume"]).cumsum() / data["Volume"].cumsum().replace(0, np.nan)
     data["vwap_bullish"] = data["Close"] > data["vwap"]
 
-    high_low = data["High"] - data["Low"]
+    true_range = pd.concat([
+        data["High"] - data["Low"],
+        (data["High"] - data["Close"].shift(1)).abs(),
+        (data["Low"] - data["Close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    true_range.iloc[0] = np.nan
     up_move = data["High"] - data["High"].shift(1)
     down_move = data["Low"].shift(1) - data["Low"]
-    plus_di = 100 * (up_move.where((up_move > down_move) & (up_move > 0), 0).rolling(adx_period).sum() / high_low.rolling(adx_period).sum().replace(0, np.nan))
-    minus_di = 100 * (down_move.where((down_move > up_move) & (down_move > 0), 0).rolling(adx_period).sum() / high_low.rolling(adx_period).sum().replace(0, np.nan))
-    dx = 100 * (np.abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan))
-    data["adx"] = dx.ewm(span=adx_period, adjust=False).mean()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+    plus_dm.iloc[0] = minus_dm.iloc[0] = np.nan
+    atr = wilder_average(true_range, adx_period)
+    plus_di = 100 * wilder_average(plus_dm, adx_period) / atr.replace(0, np.nan)
+    minus_di = 100 * wilder_average(minus_dm, adx_period) / atr.replace(0, np.nan)
+    di_sum = plus_di + minus_di
+    dx = 100 * (plus_di - minus_di).abs() / di_sum.replace(0, np.nan)
+    dx = dx.mask((di_sum == 0) | (atr == 0), 0.0)
+    data["adx"] = wilder_average(dx, adx_period)
     data["adx_strong"] = data["adx"] >= adx_threshold
 
-    if pe_ratio not in (None, np.nan):
+    per_available = pe_ratio is not None and np.isfinite(float(pe_ratio))
+    if per_available:
         data["per"] = float(pe_ratio)
         data["per_support"] = (float(pe_ratio) > 0) & (float(pe_ratio) <= per_max)
     else:
@@ -603,10 +632,6 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     # El PER solo cuenta si hay dato real disponible para ese ticker.
     # Si no hay PE ratio, se excluye del denominador para no penalizar
     # injustamente a empresas sin ese dato (ETFs, algunos mercados, etc.)
-    per_available = pe_ratio not in (None, np.nan) and not (
-        isinstance(pe_ratio, float) and np.isnan(pe_ratio)
-    )
-
     total_weight = (
         weight_trend + weight_cfi_daily + weight_cfi_weekly +
         weight_accumulation + weight_flow +

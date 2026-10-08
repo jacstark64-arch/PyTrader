@@ -93,7 +93,7 @@ async function analyzeTickers(input) {
         low: row.low,
         close: row.close,
         volume: row.volume,
-      })).reverse();
+      })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
       results.push(buildAnalysisResponse(ticker, rows, request));
     } catch (error) {

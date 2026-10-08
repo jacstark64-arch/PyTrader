@@ -32,8 +32,8 @@ function buildTradingViewSymbol(ticker) {
   ticker = String(ticker).trim().toUpperCase();
   if (ticker.includes(':')) return ticker;
   for (const suf of Object.keys(TV_SUFFIX_EXCHANGE_MAP)) {
-    if (ticker.endsWith(suf.replace('.', ''))) {
-      const base = ticker.slice(0, -suf.length + 1);
+    if (ticker.endsWith(suf)) {
+      const base = ticker.slice(0, -suf.length);
       return `${TV_SUFFIX_EXCHANGE_MAP[suf]}:${base}`;
     }
   }
@@ -72,12 +72,52 @@ function padArray(arr, length) {
   return out;
 }
 
+function rollingMean(values, period) {
+  return values.map((_, i) => {
+    if (i < period - 1) return null;
+    const window = values.slice(i - period + 1, i + 1);
+    return window.every(Number.isFinite) ? window.reduce((sum, value) => sum + value, 0) / period : null;
+  });
+}
+
+function weeklyCfiUp(rows) {
+  const sessionDate = value => new Date(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value) ? value + 'Z' : value);
+  const weeks = new Map();
+  for (const row of rows) {
+    const day = sessionDate(row.date);
+    day.setUTCHours(0, 0, 0, 0);
+    day.setUTCDate(day.getUTCDate() + (7 - day.getUTCDay()) % 7);
+    const key = day.getTime();
+    const week = weeks.get(key);
+    if (week) {
+      week.close = row.close;
+      week.volume += row.volume;
+    } else weeks.set(key, { open: row.open, close: row.close, volume: row.volume });
+  }
+  const labels = [...weeks.keys()];
+  const cfi = ewma([...weeks.values()].map(w => w.volume * (w.close - w.open)), 20);
+  const average = ewma(cfi, 20);
+  let weekIndex = -1;
+  return rows.map(row => {
+    const date = sessionDate(row.date).getTime();
+    while (weekIndex + 1 < labels.length && labels[weekIndex + 1] <= date) weekIndex += 1;
+    return weekIndex >= 0 && cfi[weekIndex] > average[weekIndex];
+  });
+}
+
+function wilderAverage(values, period) {
+  const valid = values.filter(v => v != null);
+  return padArray(ti.WEMA.calculate({ values: valid, period }), values.length);
+}
+
 function calculateIndicators(ohlcv, options = {}) {
+  ohlcv = [...ohlcv].sort((a, b) => new Date(a.date) - new Date(b.date));
   // ohlcv: array of {open, high, low, close, volume, date}
   const defaults = {
     rsiPeriod: 14, rsiOverbought: 70, rsiOversold: 30,
     macdFast: 12, macdSlow: 26, macdSignal: 9,
-    per: null, perMax: 25, adxPeriod: 14
+    per: null, perMax: 25, adxPeriod: 14, adxThreshold: 20,
+    rsiWeight: 5, macdWeight: 5, perWeight: 5, adxWeight: 5, vwapWeight: 5
   };
   const cfg = Object.assign({}, defaults, options);
   const n = ohlcv.length;
@@ -94,11 +134,12 @@ function calculateIndicators(ohlcv, options = {}) {
   const cfi = ewma(cfiRaw, 20);
   const cfiMa = ewma(cfi.map(x => x == null ? 0 : x), 20);
   const cfiUp = cfi.map((v, i) => v != null && cfiMa[i] != null ? v > cfiMa[i] : false);
+  const cfiWeeklyUp = weeklyCfiUp(ohlcv);
 
   // Vol MA (SMA 50)
   const volMa = ti.SMA.calculate({ period: 50, values: volume });
   const volMaP = padArray(volMa, n);
-  const volStrong = volume.map((v, i) => (v || 0) > (volMaP[i] || 0));
+  const volStrong = volume.map((v, i) => volMaP[i] != null && v > volMaP[i]);
 
   const spread = ohlcv.map(r => Math.max((r.high - r.low), 0.0001));
   const closePos = close.map((c, i) => ((c - low[i]) / spread[i]));
@@ -107,22 +148,18 @@ function calculateIndicators(ohlcv, options = {}) {
   const flowSmooth = ewma(flow, 5);
 
   // RSI
-  const rsi = ti.RSI.calculate({ period: cfg.rsiPeriod, values: close });
-  const rsiP = padArray(rsi, n).map(v => v == null ? 50 : v);
+  const changes = close.map((v, i) => i ? v - close[i - 1] : null);
+  const gains = rollingMean(changes.map(v => v == null ? null : Math.max(v, 0)), cfg.rsiPeriod);
+  const losses = rollingMean(changes.map(v => v == null ? null : Math.max(-v, 0)), cfg.rsiPeriod);
+  const rsiP = gains.map((gain, i) => gain == null ? 50 : losses[i] === 0 ? (gain > 0 ? 100 : 50) : 100 - 100 / (1 + gain / losses[i]));
   const rsiBullish = rsiP.map((v, i) => i>0 ? v > 50 && v > rsiP[i-1] : false);
 
   // MACD
-  const macdOut = ti.MACD.calculate({
-    values: close,
-    fastPeriod: cfg.macdFast,
-    slowPeriod: cfg.macdSlow,
-    signalPeriod: cfg.macdSignal,
-    SimpleMAOscillator: false,
-    SimpleMASignal: false
-  });
-  const macd = padArray(macdOut.map(x=>x.MACD), n);
-  const macdSignal = padArray(macdOut.map(x=>x.signal), n);
-  const macdBullish = macd.map((m, i) => (m != null && macdSignal[i] != null) ? (m > macdSignal[i] && m > (macd[i-1]||-Infinity)) : false);
+  const fast = ewma(close, cfg.macdFast);
+  const slow = ewma(close, cfg.macdSlow);
+  const macd = fast.map((v, i) => v - slow[i]);
+  const macdSignal = ewma(macd, cfg.macdSignal);
+  const macdBullish = macd.map((m, i) => i > 0 && m > macdSignal[i] && m > macd[i - 1]);
 
   // VWAP
   const typical = ohlcv.map(r => (r.high + r.low + r.close) / 3);
@@ -133,12 +170,26 @@ function calculateIndicators(ohlcv, options = {}) {
   const vwapBullish = close.map((c,i) => (c != null && vwap[i] != null) ? c > vwap[i] : false);
 
   // ADX
-  const adxOut = ti.ADX.calculate({ period: cfg.adxPeriod, high, low, close });
-  const adx = padArray(adxOut, n).map(x => (x && x.adx) ? x.adx : null);
-  const adxStrong = adx.map(v => v != null ? v >= 20 : false);
+  const trueRange = high.map((h, i) => i ? Math.max(h - low[i], Math.abs(h - close[i - 1]), Math.abs(low[i] - close[i - 1])) : null);
+  const plusDm = high.map((h, i) => {
+    if (!i) return null;
+    const up = h - high[i - 1], down = low[i - 1] - low[i];
+    return up > down && up > 0 ? up : 0;
+  });
+  const minusDm = low.map((l, i) => {
+    if (!i) return null;
+    const up = high[i] - high[i - 1], down = low[i - 1] - l;
+    return down > up && down > 0 ? down : 0;
+  });
+  const atr = wilderAverage(trueRange, cfg.adxPeriod);
+  const plus = wilderAverage(plusDm, cfg.adxPeriod);
+  const minus = wilderAverage(minusDm, cfg.adxPeriod);
+  const dx = atr.map((value, i) => value == null ? null : (value === 0 || plus[i] + minus[i] === 0) ? 0 : 100 * Math.abs(plus[i] - minus[i]) / (plus[i] + minus[i]));
+  const adx = wilderAverage(dx, cfg.adxPeriod);
+  const adxStrong = adx.map(v => v != null ? v >= cfg.adxThreshold : false);
 
   // Moving averages for trend
-  const ema21 = padArray(ti.EMA.calculate({ period: 21, values: close }), n);
+  const ema21 = ewma(close, 21);
   const sma50 = padArray(ti.SMA.calculate({ period: 50, values: close }), n);
   const sma200 = padArray(ti.SMA.calculate({ period: 200, values: close }), n);
   const trendUp = close.map((c,i) => (c != null && ema21[i]!=null && sma50[i]!=null && sma200[i]!=null) ? (c > ema21[i] && ema21[i] > sma50[i] && sma50[i] > sma200[i]) : false);
@@ -155,23 +206,25 @@ function calculateIndicators(ohlcv, options = {}) {
   const sell = ohlcv.map((r,i) => distribution[i] || bearDiv[i] || ((flowSmooth[i]||0) < 0));
 
   // PER support
-  const per = cfg.per != null ? cfg.per : null;
+  const per = cfg.per != null && Number.isFinite(Number(cfg.per)) ? Number(cfg.per) : null;
   const perSupportBool = per != null ? (per > 0 && per <= cfg.perMax) : false;
 
   // Score
   const results = [];
+  const totalWeight = 100 + cfg.rsiWeight + cfg.macdWeight + cfg.adxWeight + cfg.vwapWeight + (per != null ? cfg.perWeight : 0);
   for (let i=0;i<n;i++) {
-    const score = Math.max(0, Math.min(100,
+    const score = Math.max(0, Math.min(100, 100 / totalWeight * (
       (trendUp[i] ? 25 : 0) +
       (cfiUp[i] ? 25 : 0) +
-      (false ? 20 : 0) +
+      (cfiWeeklyUp[i] ? 20 : 0) +
       (accumulation[i] ? 15 : 0) +
       ((flowSmooth[i]||0) > 0 ? 15 : 0) +
-      (rsiBullish[i] ? 5 : 0) +
-      (macdBullish[i] ? 5 : 0) +
-      (perSupportBool ? 5 : 0) +
-      (adxStrong[i] ? 5 : 0) +
-      (vwapBullish[i] ? 5 : 0)
+      (rsiBullish[i] ? cfg.rsiWeight : 0) +
+      (macdBullish[i] ? cfg.macdWeight : 0) +
+      (perSupportBool ? cfg.perWeight : 0) +
+      (adxStrong[i] ? cfg.adxWeight : 0) +
+      (vwapBullish[i] ? cfg.vwapWeight : 0)
+      )
     ));
 
     const signal = buyPro[i] || ((rsiBullish[i] && macdBullish[i]) && trendUp[i]) ? 'COMPRA FUERTE' : (buyEarly[i] ? 'COMPRA TEMPRANA' : (sell[i] ? 'VENTA' : 'ESPERA'));
@@ -179,6 +232,7 @@ function calculateIndicators(ohlcv, options = {}) {
     results.push(Object.assign({}, ohlcv[i], {
       cfi: cfi[i],
       cfiUp: cfiUp[i],
+      cfiWeeklyUp: cfiWeeklyUp[i],
       volMa: volMaP[i],
       volStrong: volStrong[i],
       closePos: closePos[i],

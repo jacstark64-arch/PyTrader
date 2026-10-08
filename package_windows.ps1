@@ -23,6 +23,8 @@ Remove-Item -Force $ZipPath -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $PackageDir | Out-Null
 
 Copy-Item -LiteralPath $ExePath -Destination (Join-Path $PackageDir "PyTrader.exe") -Force
+Copy-Item -LiteralPath (Join-Path $AppDir "lupa-diagrama-negocios.png") -Destination (Join-Path $PackageDir "lupa-diagrama-negocios.png") -Force
+Copy-Item -LiteralPath (Join-Path $AppDir ".env.example") -Destination (Join-Path $PackageDir ".env.example") -Force
 
 @'
 $ErrorActionPreference = "Stop"
@@ -33,6 +35,8 @@ $ExePath = Join-Path $InstallDir "PyTrader.exe"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $ScriptDir "PyTrader.exe") -Destination $ExePath -Force
+Copy-Item -LiteralPath (Join-Path $ScriptDir "lupa-diagrama-negocios.png") -Destination (Join-Path $InstallDir "lupa-diagrama-negocios.png") -Force
+Copy-Item -LiteralPath (Join-Path $ScriptDir ".env.example") -Destination (Join-Path $InstallDir ".env.example") -Force
 
 $WScript = New-Object -ComObject WScript.Shell
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "PyTrader.lnk"
@@ -45,6 +49,7 @@ foreach ($ShortcutPath in @($DesktopShortcut, $StartMenuShortcut)) {
     $Shortcut = $WScript.CreateShortcut($ShortcutPath)
     $Shortcut.TargetPath = $ExePath
     $Shortcut.WorkingDirectory = $InstallDir
+    $Shortcut.IconLocation = $ExePath
     $Shortcut.Description = "Smart Money stock screener"
     $Shortcut.Save()
 }
@@ -63,6 +68,10 @@ Instalacion:
 
 El instalador copia PyTrader.exe a %LOCALAPPDATA%\PyTrader y crea accesos directos
 en el Escritorio y en el menu Inicio.
+
+Configuracion opcional de correo:
+- Copia .env.example como .env dentro de %LOCALAPPDATA%\PyTrader
+- Rellena las variables SMTP antes de abrir la aplicacion
 '@ | Set-Content -LiteralPath (Join-Path $PackageDir "README.txt") -Encoding ASCII
 
 Compress-Archive -Path (Join-Path $PackageDir "*") -DestinationPath $ZipPath -Force

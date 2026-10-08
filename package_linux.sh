@@ -16,6 +16,8 @@ rm -rf "$PACKAGE_DIR" "$ARCHIVE"
 mkdir -p "$PACKAGE_DIR"
 
 cp "$DIST_DIR/PyTrader" "$PACKAGE_DIR/PyTrader"
+cp "$APP_DIR/lupa-diagrama-negocios.png" "$PACKAGE_DIR/lupa-diagrama-negocios.png"
+cp "$APP_DIR/.env.example" "$PACKAGE_DIR/.env.example"
 
 cat > "$PACKAGE_DIR/install.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -28,6 +30,8 @@ DESKTOP_FILE="$HOME/.local/share/applications/pytrader.desktop"
 
 mkdir -p "$INSTALL_DIR" "$HOME/.local/bin" "$HOME/.local/share/applications"
 cp "$SCRIPT_DIR/PyTrader" "$INSTALL_DIR/PyTrader"
+cp "$SCRIPT_DIR/lupa-diagrama-negocios.png" "$INSTALL_DIR/lupa-diagrama-negocios.png"
+cp "$SCRIPT_DIR/.env.example" "$INSTALL_DIR/.env.example"
 chmod +x "$INSTALL_DIR/PyTrader"
 
 cat > "$LAUNCHER" <<LAUNCHER_EOF
@@ -42,6 +46,7 @@ Type=Application
 Name=PyTrader
 Comment=Smart Money stock screener
 Exec=$LAUNCHER
+Icon=$INSTALL_DIR/lupa-diagrama-negocios.png
 Terminal=false
 Categories=Office;Finance;
 StartupNotify=true
@@ -64,6 +69,10 @@ Instalacion:
 1. Descomprime este paquete.
 2. Ejecuta ./install.sh
 3. Abre PyTrader desde el menu de aplicaciones o ejecuta: pytrader
+
+Configuracion opcional de correo:
+- Copia .env.example como .env dentro de ~/.local/opt/pytrader
+- Rellena las variables SMTP antes de abrir la aplicacion
 EOF
 
 tar -C "$DIST_DIR" -czf "$ARCHIVE" "$PACKAGE_NAME"

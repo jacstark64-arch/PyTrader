@@ -36,6 +36,7 @@ const DEFAULT_CONFIG = Object.freeze({
   macdSlow: 26, macdSignal: 9, adxPeriod: 14, minScore: 0,
 });
 const CONFIG_STORAGE_KEY = 'pytrader-web-config';
+const WEB_UNAVAILABLE_MESSAGE = 'La pagina web no esta operativa. Yahoo Finance limito las solicitudes.';
 
 let lastResults = [];
 let loadedTickers = [];
@@ -132,7 +133,7 @@ async function readJsonResponse(response) {
     return JSON.parse(body);
   } catch {
     if (response.status === 429 || /too many requests/i.test(body)) {
-      throw new Error('Yahoo Finance ha limitado las solicitudes. Espera unos minutos y vuelve a intentarlo.');
+      throw new Error(WEB_UNAVAILABLE_MESSAGE);
     }
     throw new Error(`El servidor devolvió una respuesta no válida (${response.status}).`);
   }
@@ -179,6 +180,10 @@ function renderResults() {
       <td>${escapeHtml(result.date || '—')}</td>
     </tr>`;
   }).join('');
+}
+
+function isWebUnavailableError(error) {
+  return /pagina web no esta operativa|página web no está operativa|yahoo finance.*limit|too many requests|\b429\b/i.test(error?.message || String(error));
 }
 
 async function checkHealth() {
@@ -234,8 +239,15 @@ async function analyze() {
         });
         const payload = await readJsonResponse(response);
         if (!response.ok || !payload.success) throw new Error(payload.error || 'No se pudo analizar.');
+        if ((payload.results || []).some((item) => item.fatal || isWebUnavailableError(item.error))) {
+          throw new Error(WEB_UNAVAILABLE_MESSAGE);
+        }
         mergeResults(payload.results);
       } catch (error) {
+        if (isWebUnavailableError(error)) {
+          stopRequested = true;
+          throw new Error(WEB_UNAVAILABLE_MESSAGE);
+        }
         mergeResults([{ ticker, error: error.message || 'No se pudo analizar.' }]);
       }
 

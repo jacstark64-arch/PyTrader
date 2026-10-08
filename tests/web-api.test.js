@@ -9,6 +9,11 @@ const {
   isYahooRateLimitError,
   toYahooHistoryOptions,
 } = require('../src/yahoo-history-options');
+const {
+  isMarketDataUnavailableError,
+  parseStooqCsv,
+  stooqSymbolCandidates,
+} = require('../src/market-history');
 
 const sampleResult = {
   date: '2026-03-01',
@@ -85,6 +90,20 @@ test('toYahooHistoryOptions converts configured periods to period1 dates', () =>
 test('isYahooRateLimitError recognizes a plain-text 429 response', () => {
   assert.equal(isYahooRateLimitError(new Error("Unexpected token 'T', \"Too Many Requests \" is not valid JSON")), true);
   assert.equal(isYahooRateLimitError(new Error('Invalid symbol')), false);
+});
+
+test('Stooq helpers parse CSV and convert common Yahoo suffixes', () => {
+  const rows = parseStooqCsv('Date,Open,High,Low,Close,Volume\n2026-01-02,10,11,9,10.5,1200\n');
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].close, 10.5);
+  assert.deepEqual(stooqSymbolCandidates('AAPL'), ['aapl.us', 'aapl']);
+  assert.deepEqual(stooqSymbolCandidates('SAN.MC'), ['san.es', 'san.mc', 'san']);
+});
+
+test('market data unavailable recognizes Yahoo limit messages as fatal', () => {
+  assert.equal(isMarketDataUnavailableError(new Error('Yahoo Finance limitó las solicitudes.')), true);
+  assert.equal(isMarketDataUnavailableError(new Error('Network timeout')), false);
 });
 
 test('serializeAnalysisResult returns a serializable result', () => {

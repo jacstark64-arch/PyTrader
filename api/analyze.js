@@ -23,10 +23,38 @@ function normalizeAnalyzeRequest(input = {}) {
 
   const period = String(input.period || '1y');
   const interval = String(input.interval || '1d');
+  const rsiPeriod = positiveInteger(input.rsiPeriod, 14, 'RSI');
+  const macdFast = positiveInteger(input.macdFast, 12, 'MACD rápido');
+  const macdSlow = positiveInteger(input.macdSlow, 26, 'MACD lento');
+  const macdSignal = positiveInteger(input.macdSignal, 9, 'MACD señal');
+  const adxPeriod = positiveInteger(input.adxPeriod, 14, 'ADX');
+  const minScore = Number(input.minScore ?? 0);
+
   if (!PERIODS.has(period)) throw new Error('El periodo no es válido.');
   if (!INTERVALS.has(interval)) throw new Error('El intervalo no es válido.');
+  if (macdFast >= macdSlow) throw new Error('El período MACD rápido debe ser inferior al período MACD lento.');
+  if (macdSignal >= macdFast) throw new Error('El período MACD señal debe ser inferior al período MACD rápido.');
+  if (!Number.isFinite(minScore) || minScore < 0 || minScore > 100) throw new Error('El score mínimo debe estar entre 0 y 100.');
 
-  return { tickers, period, interval };
+  return {
+    tickers,
+    period,
+    interval,
+    rsiPeriod,
+    macdFast,
+    macdSlow,
+    macdSignal,
+    adxPeriod,
+    minScore,
+  };
+}
+
+function positiveInteger(value, fallback, label) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isInteger(parsed) || parsed < 2 || parsed > 200) {
+    throw new Error(`El período de ${label} debe ser un entero entre 2 y 200.`);
+  }
+  return parsed;
 }
 
 function serializeAnalysisResult(ticker, result) {

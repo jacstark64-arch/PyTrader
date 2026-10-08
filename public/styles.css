@@ -83,6 +83,19 @@ tbody tr:hover { background: rgba(56, 189, 248, 0.04); }
 .email-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .email-form label { display: grid; gap: 6px; }
 .email-form .field-wide { grid-column: 1 / -1; }
+.config-fab { position: fixed; z-index: 20; right: 24px; bottom: 24px; display: grid; width: 54px; height: 54px; place-items: center; border: 1px solid rgba(56, 189, 248, 0.45); border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-strong)); color: #fff; box-shadow: 0 12px 30px rgba(14, 165, 233, 0.35); font-size: 1.45rem; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+.config-fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 16px 38px rgba(14, 165, 233, 0.45); }
+.config-fab:focus-visible { outline: 3px solid rgba(56, 189, 248, 0.45); outline-offset: 4px; }
+.config-dialog { width: min(720px, calc(100% - 28px)); padding: 0; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55); }
+.config-dialog::backdrop { background: rgba(2, 8, 23, 0.72); backdrop-filter: blur(5px); }
+.config-dialog form { padding: 24px; }
+.dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.dialog-heading h2 { margin: 5px 0 0; font-size: 1.45rem; }
+.icon-button { width: 40px; height: 40px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); color: var(--text); font-size: 1.5rem; line-height: 1; }
+.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.config-grid label { display: grid; gap: 7px; }
+.config-error { min-height: 20px; margin: 14px 0 0; color: var(--danger); font-size: 0.82rem; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
 @media (max-width: 850px) {
   .hero, .section-heading, .email-panel { align-items: stretch; flex-direction: column; display: flex; }
   .controls-panel { grid-template-columns: 1fr 1fr; }
@@ -97,6 +110,10 @@ tbody tr:hover { background: rgba(56, 189, 248, 0.04); }
   .analysis-actions { grid-column: auto; }
   .analysis-actions button { flex: 1; }
   .email-form .field-wide { grid-column: auto; }
+  .config-fab { right: 16px; bottom: 16px; width: 50px; height: 50px; }
+  .config-grid { grid-template-columns: 1fr; }
+  .dialog-actions { flex-direction: column-reverse; }
+  .dialog-actions button { width: 100%; }
   .filters { flex-direction: column; }
   .compact-field { width: 100%; }
   .hero { margin-bottom: 20px; }

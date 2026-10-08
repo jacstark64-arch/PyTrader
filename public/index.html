@@ -124,6 +124,38 @@
       </form>
     </section>
   </main>
+
+  <button class="config-fab" id="configButton" type="button" aria-label="Abrir configuración" aria-haspopup="dialog" aria-controls="configDialog" title="Configuración">
+    <span aria-hidden="true">⚙</span>
+  </button>
+
+  <dialog id="configDialog" class="config-dialog" aria-labelledby="configTitle">
+    <form id="configForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Personalización</p>
+          <h2 id="configTitle">Configuración</h2>
+        </div>
+        <button class="icon-button" id="closeConfigButton" type="button" aria-label="Cerrar configuración">×</button>
+      </div>
+      <div class="config-grid">
+        <label><span>Periodo</span><select id="configPeriod"><option value="1y">1 año</option><option value="6mo">6 meses</option><option value="3mo">3 meses</option><option value="1mo">1 mes</option><option value="5d">5 días</option><option value="1d">1 día</option></select></label>
+        <label><span>Intervalo</span><select id="configInterval"><option value="1d">Diario</option><option value="1w">Semanal</option><option value="1mo">Mensual</option><option value="1h">Horario</option><option value="15m">15 minutos</option></select></label>
+        <label><span>RSI (periodo)</span><input id="configRsiPeriod" type="number" min="2" max="200" value="14"></label>
+        <label><span>MACD rápido</span><input id="configMacdFast" type="number" min="2" max="200" value="12"></label>
+        <label><span>MACD lento</span><input id="configMacdSlow" type="number" min="3" max="200" value="26"></label>
+        <label><span>MACD señal</span><input id="configMacdSignal" type="number" min="2" max="200" value="9"></label>
+        <label><span>ADX (periodo)</span><input id="configAdxPeriod" type="number" min="2" max="200" value="14"></label>
+        <label><span>Score mínimo</span><input id="configMinScore" type="number" min="0" max="100" value="0"></label>
+      </div>
+      <p id="configError" class="config-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="secondary-button" id="resetConfigButton" type="button">Restaurar</button>
+        <button class="primary-button" type="submit">Guardar configuración</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/app.js"></script>
 </body>
 </html>

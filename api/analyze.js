@@ -1,6 +1,7 @@
 const PERIODS = new Set(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max']);
 const INTERVALS = new Set(['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w', '1mo']);
 const { fetchYahooHistory, isYahooRateLimitError } = require('../src/yahoo-history-options');
+const { normalizeTicker } = require('../src/F_Trader_4');
 
 function loadDependencies() {
   const yf = require('yahoo-finance2').default;
@@ -113,7 +114,10 @@ async function analyzeTickers(input) {
 
   for (const ticker of request.tickers) {
     try {
-      const history = await fetchYahooHistory(yf, ticker, request.period, request.interval);
+      // TradingView style symbols (NASDAQ:SMCI) are not Yahoo Finance symbols.
+      // Convert only for the data lookup and keep the user's notation in results.
+      const yahooTicker = normalizeTicker(ticker);
+      const history = await fetchYahooHistory(yf, yahooTicker, request.period, request.interval);
       const rows = (history || []).map((row) => ({
         date: row.date,
         open: row.open,

@@ -193,7 +193,7 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "Mi Screener V5.6    08/10/2026"))
+        MainWindow.setWindowTitle(_translate("MainWindow", "Mi Screener V5.7    09/10/2026"))
         self.B_Reiniciar.setText(_translate("MainWindow", "Reiniciar análisis"))
         self.B_LimpiarResultados.setText(_translate("MainWindow", "Limpiar"))
         self.B_Cancelar.setText(_translate("MainWindow", "Cancelar"))

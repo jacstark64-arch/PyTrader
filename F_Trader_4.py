@@ -17,7 +17,6 @@ from PyQt6.QtCore import (  # pylint: disable=no-name-in-module
     QUrl,
     QThread,
     QTimer,
-    QTime,
     QSettings,
     pyqtSignal,
     QStringListModel,
@@ -48,7 +47,6 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDoubleSpinBox,
     QCheckBox,
     QLineEdit,
-    QTimeEdit,
 )
 
 import numpy as np
@@ -160,8 +158,6 @@ EUROPE_MARKET_START = dt_time(9, 30)
 EUROPE_MARKET_END = dt_time(17, 0)
 US_MARKET_START = dt_time(15, 30)
 US_MARKET_END = dt_time(22, 0)
-LOOP_ACTIVE_START = dt_time(10, 0)
-LOOP_ACTIVE_END = dt_time(21, 0)
 
 DEFAULT_APP_OPTIONS = {
     "period": PERIOD,
@@ -190,8 +186,6 @@ DEFAULT_APP_OPTIONS = {
     "europe_market_end": EUROPE_MARKET_END,
     "us_market_start": US_MARKET_START,
     "us_market_end": US_MARKET_END,
-    "loop_active_start": LOOP_ACTIVE_START,
-    "loop_active_end": LOOP_ACTIVE_END,
 }
 
 CONFIG_KEYS = {
@@ -221,8 +215,6 @@ CONFIG_KEYS = {
     "EUROPE_MARKET_END",
     "US_MARKET_START",
     "US_MARKET_END",
-    "LOOP_ACTIVE_START",
-    "LOOP_ACTIVE_END",
 }
 
 
@@ -718,21 +710,6 @@ def time_to_text(value):
     return value.strftime("%H:%M")
 
 
-def text_to_time(value, fallback):
-    try:
-        return datetime.strptime(str(value), "%H:%M").time()
-    except (TypeError, ValueError):
-        return fallback
-
-
-def qt_time_from_python(value):
-    return QTime(value.hour, value.minute, value.second)
-
-
-def python_time_from_qt(value):
-    return dt_time(value.hour(), value.minute(), value.second())
-
-
 class OptionsDialog(QDialog):
     option_changed = pyqtSignal(object)
 
@@ -801,11 +778,6 @@ class OptionsDialog(QDialog):
 
         self.email_to = QLineEdit()
 
-        self.loop_start = QTimeEdit()
-        self.loop_end = QTimeEdit()
-        for widget in (self.loop_start, self.loop_end):
-            widget.setDisplayFormat("HH:mm")
-
         form = QFormLayout()
         form.addRow("Periodo de datos", self.period)
         form.addRow("Intervalo de datos", self.interval)
@@ -829,8 +801,6 @@ class OptionsDialog(QDialog):
         form.addRow("Peso ADX en score", self.adx_weight)
         form.addRow("Peso VWAP en score", self.vwap_weight)
         form.addRow("Email resultados", self.email_to)
-        form.addRow("Loop activo inicio", self.loop_start)
-        form.addRow("Loop activo fin", self.loop_end)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -873,8 +843,6 @@ class OptionsDialog(QDialog):
         self.adx_weight.valueChanged.connect(self._emit_options_changed)
         self.vwap_weight.valueChanged.connect(self._emit_options_changed)
         self.email_to.textChanged.connect(self._emit_options_changed)
-        self.loop_start.timeChanged.connect(self._emit_options_changed)
-        self.loop_end.timeChanged.connect(self._emit_options_changed)
 
     def _emit_options_changed(self):
         self.option_changed.emit(self.options())
@@ -906,8 +874,6 @@ class OptionsDialog(QDialog):
         self.adx_weight.setValue(int(options["indicator_adx_weight"]))
         self.vwap_weight.setValue(int(options["indicator_vwap_weight"]))
         self.email_to.setText(str(options["email_results_to"]))
-        self.loop_start.setTime(qt_time_from_python(options["loop_active_start"]))
-        self.loop_end.setTime(qt_time_from_python(options["loop_active_end"]))
 
     def options(self):
         return {
@@ -937,8 +903,6 @@ class OptionsDialog(QDialog):
             "europe_market_end": DEFAULT_APP_OPTIONS["europe_market_end"],
             "us_market_start": DEFAULT_APP_OPTIONS["us_market_start"],
             "us_market_end": DEFAULT_APP_OPTIONS["us_market_end"],
-            "loop_active_start": python_time_from_qt(self.loop_start.time()),
-            "loop_active_end": python_time_from_qt(self.loop_end.time()),
         }
 
 
@@ -1229,7 +1193,6 @@ class MainWindow(QMainWindow):
         self.analysis_clear_results = False
         self.analysis_replace_results = False
         self.analysis_show_current_results = False
-        self._loop_market_close_handled = False
         self.lcd_Reloj.setDigitCount(8)
         if hasattr(self, "lcd_Loop"):
             self.lcd_Loop.setDigitCount(8)
@@ -1343,7 +1306,7 @@ class MainWindow(QMainWindow):
             }
 
             QTextEdit, QListView, QTableWidget, QLineEdit, QComboBox, QSpinBox,
-            QDoubleSpinBox, QTimeEdit {
+            QDoubleSpinBox {
                 background-color: #fbfdff;
                 border: 1px solid #c5d0d9;
                 border-radius: 5px;
@@ -1352,7 +1315,7 @@ class MainWindow(QMainWindow):
             }
 
             QTextEdit:focus, QListView:focus, QTableWidget:focus, QLineEdit:focus,
-            QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTimeEdit:focus {
+            QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
                 border: 1px solid #2687b2;
             }
 
@@ -1493,14 +1456,6 @@ class MainWindow(QMainWindow):
                 options[key],
             )
 
-        for key in (
-            "loop_active_start",
-            "loop_active_end",
-        ):
-            options[key] = text_to_time(
-                self.settings.value(key, time_to_text(options[key])),
-                DEFAULT_APP_OPTIONS[key],
-            )
         return options
 
     def _settings_bool(self, key, default):
@@ -1560,8 +1515,6 @@ class MainWindow(QMainWindow):
             "EUROPE_MARKET_END": options["europe_market_end"],
             "US_MARKET_START": options["us_market_start"],
             "US_MARKET_END": options["us_market_end"],
-            "LOOP_ACTIVE_START": options["loop_active_start"],
-            "LOOP_ACTIVE_END": options["loop_active_end"],
         }
         apply_runtime_config(config_values)
 
@@ -1741,10 +1694,6 @@ class MainWindow(QMainWindow):
     def _time_to_seconds(self, value):
         return value.hour * 3600 + value.minute * 60 + value.second
 
-    def _is_loop_time_allowed(self, now=None):
-        now_time = (now or datetime.now()).time()
-        return LOOP_ACTIVE_START <= now_time < LOOP_ACTIVE_END
-
     def _market_progress_percent(self, now_time, start_time, end_time):
         start_seconds = self._time_to_seconds(start_time)
         end_seconds = self._time_to_seconds(end_time)
@@ -1777,29 +1726,9 @@ class MainWindow(QMainWindow):
         self._set_market_progress("P_MercadoEuropeo", europe_percent)
         self._set_market_progress("P_MercadoAmericano", us_percent)
 
-    def _stop_loop_for_market_close(self):
-        if self.loop_timer.isActive():
-            self.loop_timer.stop()
-        if self.analysis_thread and self.analysis_thread.isRunning():
-            self.analysis_thread.request_stop()
-            self.B_Cancelar.setEnabled(False)
-            self.append_to_visor("Cierre de horario: cancelando análisis en curso.")
-        if self.C_Tiempo.isChecked():
-            self.C_Tiempo.setChecked(False)
-        else:
-            self.update_lcd_reloj()
-        self.append_to_visor(
-            f"Loop detenido: fuera del horario {time_to_text(LOOP_ACTIVE_START)} - "
-            f"{time_to_text(LOOP_ACTIVE_END)}."
-        )
-
     def _schedule_next_timed_analysis(self):
         if not self.C_Tiempo.isChecked():
             self._stop_loop_timer()
-            return
-
-        if not self._is_loop_time_allowed():
-            self._stop_loop_for_market_close()
             return
 
         minutes = self._get_loop_minutes(show_warning=False)
@@ -1821,14 +1750,6 @@ class MainWindow(QMainWindow):
     def update_lcd_reloj(self):
         self.update_market_progress_bars()
         self.lcd_Reloj.display(datetime.now().strftime("%H:%M:%S"))
-
-        if self.C_Tiempo.isChecked():
-            if self._is_loop_time_allowed():
-                self._loop_market_close_handled = False
-            elif not self._loop_market_close_handled:
-                self._loop_market_close_handled = True
-                self._stop_loop_for_market_close()
-                return
 
         loop_lcd = getattr(self, "lcd_Loop", None)
         if loop_lcd is None:
@@ -2379,16 +2300,6 @@ class MainWindow(QMainWindow):
             self.append_to_visor("Loop desactivado.")
             return
 
-        if not self._is_loop_time_allowed():
-            QMessageBox.warning(
-                self,
-                "Loop fuera de horario",
-                f"El loop solo puede activarse entre las "
-                f"{time_to_text(LOOP_ACTIVE_START)} y las {time_to_text(LOOP_ACTIVE_END)}.",
-            )
-            self.C_Tiempo.setChecked(False)
-            return
-
         if not self._get_loop_minutes(show_warning=True):
             self.C_Tiempo.setChecked(False)
             return
@@ -2402,7 +2313,6 @@ class MainWindow(QMainWindow):
             self.C_Tiempo.setChecked(False)
             return
 
-        self._loop_market_close_handled = False
         self.append_to_visor("Loop activado.")
         if not (self.analysis_thread and self.analysis_thread.isRunning()):
             self._schedule_next_timed_analysis()
@@ -2411,9 +2321,6 @@ class MainWindow(QMainWindow):
     def on_loop_timer_timeout(self):
         self.update_lcd_reloj()
         if not self.C_Tiempo.isChecked():
-            return
-        if not self._is_loop_time_allowed():
-            self._stop_loop_for_market_close()
             return
         if self.analysis_thread and self.analysis_thread.isRunning():
             self._schedule_next_timed_analysis()

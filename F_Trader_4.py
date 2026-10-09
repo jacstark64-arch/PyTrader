@@ -275,7 +275,10 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
 
                 return stock_data, None
 
-            except (OSError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
+            # yfinance añade excepciones propias según el proveedor (p. ej. rate
+            # limit o símbolo no disponible). Si no se capturan, se interrumpe
+            # el análisis antes de poder probar las demás variantes del ticker.
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 if attempt < max_retries - 1:
                     time.sleep(2)
                 else:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -euo pipefail
 
 echo "Instalador automático para PyTrader (Electron + Node.js)"
 
@@ -67,7 +67,6 @@ else
     nvm install --lts
     nvm use --lts
   fi
-fi
 fi
 
 echo "Instalando dependencias npm del proyecto..."

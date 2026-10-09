@@ -31,12 +31,17 @@ app.on('window-all-closed', () => {
 // Analysis handler: main process will perform downloads and indicator calculation
 ipcMain.handle('analyze', async (event, tickers, options) => {
   const yf = require('yahoo-finance2').default;
-  const { calculateIndicators } = require('./src/F_Trader_4');
+  const { calculateIndicators, normalizeTicker } = require('./src/F_Trader_4');
+  const {
+    YAHOO_UNAVAILABLE_MESSAGE,
+    fetchMarketHistory,
+    isMarketDataUnavailableError,
+  } = require('./src/market-history');
   const results = [];
   for (const ticker of tickers) {
     try {
       const params = { period: options.period || '1y', interval: options.interval || '1d' };
-      const hist = await yf.historical(ticker, params);
+      const hist = await fetchMarketHistory(yf, normalizeTicker(ticker), params.period, params.interval);
       if (!hist || hist.length === 0) {
         results.push({ ticker, error: 'Sin datos' });
         continue;
@@ -49,12 +54,13 @@ ipcMain.handle('analyze', async (event, tickers, options) => {
         low: h.low,
         close: h.close,
         volume: h.volume
-      })).reverse();
+      })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
       const augmented = calculateIndicators(ohlcv, options.indicators || {});
       const last = augmented[augmented.length - 1] || null;
       results.push({ ticker, result: last });
     } catch (err) {
+      if (isMarketDataUnavailableError(err)) return [{ ticker, error: YAHOO_UNAVAILABLE_MESSAGE, fatal: true }];
       results.push({ ticker, error: String(err) });
     }
   }

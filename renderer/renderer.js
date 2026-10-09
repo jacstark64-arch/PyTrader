@@ -11,6 +11,7 @@ const tickersInput = document.getElementById('tickers');
 
 let lastResults = [];
 let sortState = { col: 'Score', dir: -1 };
+const WEB_UNAVAILABLE_MESSAGE = 'La pagina web no esta operativa. Yahoo Finance limito las solicitudes.';
 
 // cargar configuración guardada al inicio
 document.addEventListener('DOMContentLoaded', async () => {
@@ -93,6 +94,10 @@ btn.addEventListener('click', async () => {
     const res = await window.pytrader.analyze(tickers, options);
     lastResults = res.map(r => ({ ticker: r.ticker, result: r.result, error: r.error }));
     renderTable(lastResults);
+    if (res.some(r => r.fatal)) {
+      status.textContent = WEB_UNAVAILABLE_MESSAGE;
+      return;
+    }
     status.textContent = 'Análisis finalizado.';
     await window.pytrader.setConfig('ui', {
       tickers: tickersInput.value,

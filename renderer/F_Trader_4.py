@@ -1,7 +1,7 @@
 #*******************************************************************
 #
-#            31/07/2026
-#            PyTrader V4
+#            05/10/2026
+#            PyTrader V5
 #
 #***********************************************************
 import sys
@@ -17,7 +17,6 @@ from PyQt6.QtCore import (  # pylint: disable=no-name-in-module
     QUrl,
     QThread,
     QTimer,
-    QTime,
     QSettings,
     pyqtSignal,
     QStringListModel,
@@ -48,7 +47,6 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDoubleSpinBox,
     QCheckBox,
     QLineEdit,
-    QTimeEdit,
 )
 
 import numpy as np
@@ -88,12 +86,25 @@ ADX_THRESHOLD = 20
 ADX_WEIGHT = 5
 VWAP_WEIGHT = 5
 
-EXPORT_EXCEL = True
+EXPORT_EXCEL = False
 EXCEL_NAME = "SmartMoney_Screener.xlsx"
-APP_DIR = Path(__file__).resolve().parent
+
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(sys._MEIPASS)  # pylint: disable=protected-access
+else:
+    APP_DIR = Path(__file__).resolve().parent
+    BUNDLE_DIR = APP_DIR
+
+# Conserva la notacion original MERCADO:TICKER para poder reconstruir
+# las listas de salida exactamente en el formato de TradingView.
+ORIGINAL_TICKER_MAP = {}
+A_PUNTO_FILE = "Mi_Screener.txt"
+A_PUNTO_MIN_SCORE = 70
+FAILED_TICKERS_FILE = "No_Analizados.txt"
 
 
-def load_env_file(path):
+def load_env_file(path: Path) -> None:
     if not path.exists():
         return
 
@@ -112,10 +123,8 @@ def load_env_file(path):
 load_env_file(APP_DIR / ".env")
 
 
-def resource_path(filename):
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / filename  # pylint: disable=protected-access
-    return APP_DIR / filename
+def resource_path(filename: str) -> Path:
+    return BUNDLE_DIR / filename
 
 
 UI_FILE = resource_path("F_Trader_4.ui")
@@ -153,8 +162,6 @@ EUROPE_MARKET_START = dt_time(9, 30)
 EUROPE_MARKET_END = dt_time(17, 0)
 US_MARKET_START = dt_time(15, 30)
 US_MARKET_END = dt_time(22, 0)
-LOOP_ACTIVE_START = dt_time(10, 0)
-LOOP_ACTIVE_END = dt_time(21, 0)
 
 DEFAULT_APP_OPTIONS = {
     "period": PERIOD,
@@ -183,9 +190,42 @@ DEFAULT_APP_OPTIONS = {
     "europe_market_end": EUROPE_MARKET_END,
     "us_market_start": US_MARKET_START,
     "us_market_end": US_MARKET_END,
-    "loop_active_start": LOOP_ACTIVE_START,
-    "loop_active_end": LOOP_ACTIVE_END,
 }
+
+CONFIG_KEYS = {
+    "PERIOD",
+    "INTERVAL",
+    "DELAY_BETWEEN_REQUESTS",
+    "EXPORT_EXCEL",
+    "EXCEL_NAME",
+    "MIN_SCORE_TO_DISPLAY",
+    "EMAIL_MIN_SCORE",
+    "EMAIL_RESULTS_TO",
+    "RSI_PERIOD",
+    "RSI_OVERBOUGHT",
+    "RSI_OVERSOLD",
+    "RSI_WEIGHT",
+    "MACD_FAST",
+    "MACD_SLOW",
+    "MACD_SIGNAL",
+    "MACD_WEIGHT",
+    "PER_MAX",
+    "PER_WEIGHT",
+    "ADX_PERIOD",
+    "ADX_THRESHOLD",
+    "ADX_WEIGHT",
+    "VWAP_WEIGHT",
+    "EUROPE_MARKET_START",
+    "EUROPE_MARKET_END",
+    "US_MARKET_START",
+    "US_MARKET_END",
+}
+
+
+def apply_runtime_config(values):
+    for key, value in values.items():
+        if key in CONFIG_KEYS:
+            globals()[key] = value
 
 
 # =========================================================
@@ -202,7 +242,7 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
     # Sufijos comunes para exchanges europeos (se intentan si no vienen en el ticker)
     eu_suffixes = [
         ".MC", ".PA", ".L", ".DE", ".F", ".AS", ".MI", ".HE", ".ST",
-        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX",
+        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX", ".SSE", ".ME"
     ]
 
     def try_download(sym):
@@ -231,11 +271,11 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
 
                 return stock_data, None
 
-            except Exception as e:
+            except (OSError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
                 if attempt < max_retries - 1:
                     time.sleep(2)
                 else:
-                    return None, f"Error después de {max_retries} intentos: {str(e)}"
+                    return None, f"Error después de {max_retries} intentos: {str(exc)}"
 
     # 1) Intentar con el ticker tal cual
     data, err = try_download(ticker)
@@ -275,11 +315,18 @@ def load_tickers(filename):
     tickers = []
 
     for item in content.replace(";", ",").replace("\n", ",").split(","):
-        item = item.strip()
-        if not item:
+        original = item.strip().upper()
+        if not original or original.startswith("###"):
             continue
-        item = normalize_ticker(item)
-        tickers.append(item)
+
+        normalized = normalize_ticker(original)
+        if not normalized:
+            continue
+
+        # Guardamos la primera notacion original encontrada.
+        # Ej.: NYSE:HPE -> HPE, pero para A_Punto.txt conservamos NYSE:HPE.
+        ORIGINAL_TICKER_MAP.setdefault(normalized, original)
+        tickers.append(normalized)
 
     return [ticker for ticker in tickers if ticker]
 
@@ -382,20 +429,31 @@ def get_pe_ratio(ticker):
 
         info = getattr(ticker_obj, "info", None) or {}
         if isinstance(info, dict):
-            for key in ("forwardPE", "trailingPE", "pegRatio"):
+            for key in ("forwardPE", "trailingPE"):
                 value = info.get(key)
                 if value not in (None, 0):
                     return float(value)
-    except Exception:
+    except (AttributeError, TypeError, ValueError, RuntimeError):
         return None
     return None
+
+
+def wilder_average(values, period):
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    valid = values.dropna()
+    if len(valid) < period:
+        return result
+    seeded = valid.iloc[period - 1:].copy()
+    seeded.iloc[0] = valid.iloc[:period].mean()
+    result.loc[seeded.index] = seeded.ewm(alpha=1 / period, adjust=False).mean()
+    return result
 
 
 def calculate_indicators(dataframe, pe_ratio=None, params=None):
     """
     Calcula indicadores Smart Money, CFI, Flow, Tendencia, RSI, MACD, PER y señales.
     """
-    data = dataframe.copy()
+    data = dataframe.sort_index().copy()
     indicator_params = {
         "rsi_period": 14,
         "rsi_overbought": 70,
@@ -447,7 +505,8 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     weekly["cfi_w"] = weekly_cfi_raw.ewm(span=20, adjust=False).mean()
     weekly["cfi_w_ma"] = weekly["cfi_w"].ewm(span=20, adjust=False).mean()
     weekly["cfi_w_up"] = weekly["cfi_w"] > weekly["cfi_w_ma"]
-    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, fill_value=False).ffill()
+    # Only use weeks whose closing label is already available to the session.
+    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, method="ffill").fillna(False)
 
     data["vol_ma"] = data["Volume"].rolling(50).mean()
     data["vol_strong"] = data["Volume"] > data["vol_ma"]
@@ -465,6 +524,7 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     avg_loss = loss.rolling(window=rsi_period, min_periods=rsi_period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     data["rsi"] = 100 - (100 / (1 + rs))
+    data.loc[(avg_loss == 0) & (avg_gain > 0), "rsi"] = 100
     data["rsi"] = data["rsi"].fillna(50)
     data["rsi_bullish"] = (data["rsi"] > 50) & (data["rsi"] > data["rsi"].shift(1))
     data["rsi_oversold"] = data["rsi"] <= rsi_oversold
@@ -480,16 +540,28 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     data["vwap"] = (typical_price * data["Volume"]).cumsum() / data["Volume"].cumsum().replace(0, np.nan)
     data["vwap_bullish"] = data["Close"] > data["vwap"]
 
-    high_low = data["High"] - data["Low"]
+    true_range = pd.concat([
+        data["High"] - data["Low"],
+        (data["High"] - data["Close"].shift(1)).abs(),
+        (data["Low"] - data["Close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    true_range.iloc[0] = np.nan
     up_move = data["High"] - data["High"].shift(1)
     down_move = data["Low"].shift(1) - data["Low"]
-    plus_di = 100 * (up_move.where((up_move > down_move) & (up_move > 0), 0).rolling(adx_period).sum() / high_low.rolling(adx_period).sum().replace(0, np.nan))
-    minus_di = 100 * (down_move.where((down_move > up_move) & (down_move > 0), 0).rolling(adx_period).sum() / high_low.rolling(adx_period).sum().replace(0, np.nan))
-    dx = 100 * (np.abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan))
-    data["adx"] = dx.ewm(span=adx_period, adjust=False).mean()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+    plus_dm.iloc[0] = minus_dm.iloc[0] = np.nan
+    atr = wilder_average(true_range, adx_period)
+    plus_di = 100 * wilder_average(plus_dm, adx_period) / atr.replace(0, np.nan)
+    minus_di = 100 * wilder_average(minus_dm, adx_period) / atr.replace(0, np.nan)
+    di_sum = plus_di + minus_di
+    dx = 100 * (plus_di - minus_di).abs() / di_sum.replace(0, np.nan)
+    dx = dx.mask((di_sum == 0) | (atr == 0), 0.0)
+    data["adx"] = wilder_average(dx, adx_period)
     data["adx_strong"] = data["adx"] >= adx_threshold
 
-    if pe_ratio not in (None, np.nan):
+    per_available = pe_ratio is not None and np.isfinite(float(pe_ratio))
+    if per_available:
         data["per"] = float(pe_ratio)
         data["per_support"] = (float(pe_ratio) > 0) & (float(pe_ratio) <= per_max)
     else:
@@ -552,10 +624,6 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     # El PER solo cuenta si hay dato real disponible para ese ticker.
     # Si no hay PE ratio, se excluye del denominador para no penalizar
     # injustamente a empresas sin ese dato (ETFs, algunos mercados, etc.)
-    per_available = pe_ratio not in (None, np.nan) and not (
-        isinstance(pe_ratio, float) and np.isnan(pe_ratio)
-    )
-
     total_weight = (
         weight_trend + weight_cfi_daily + weight_cfi_weekly +
         weight_accumulation + weight_flow +
@@ -667,21 +735,6 @@ def time_to_text(value):
     return value.strftime("%H:%M")
 
 
-def text_to_time(value, fallback):
-    try:
-        return datetime.strptime(str(value), "%H:%M").time()
-    except (TypeError, ValueError):
-        return fallback
-
-
-def qt_time_from_python(value):
-    return QTime(value.hour, value.minute, value.second)
-
-
-def python_time_from_qt(value):
-    return dt_time(value.hour(), value.minute(), value.second())
-
-
 class OptionsDialog(QDialog):
     option_changed = pyqtSignal(object)
 
@@ -750,11 +803,6 @@ class OptionsDialog(QDialog):
 
         self.email_to = QLineEdit()
 
-        self.loop_start = QTimeEdit()
-        self.loop_end = QTimeEdit()
-        for widget in (self.loop_start, self.loop_end):
-            widget.setDisplayFormat("HH:mm")
-
         form = QFormLayout()
         form.addRow("Periodo de datos", self.period)
         form.addRow("Intervalo de datos", self.interval)
@@ -778,8 +826,6 @@ class OptionsDialog(QDialog):
         form.addRow("Peso ADX en score", self.adx_weight)
         form.addRow("Peso VWAP en score", self.vwap_weight)
         form.addRow("Email resultados", self.email_to)
-        form.addRow("Loop activo inicio", self.loop_start)
-        form.addRow("Loop activo fin", self.loop_end)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -822,8 +868,6 @@ class OptionsDialog(QDialog):
         self.adx_weight.valueChanged.connect(self._emit_options_changed)
         self.vwap_weight.valueChanged.connect(self._emit_options_changed)
         self.email_to.textChanged.connect(self._emit_options_changed)
-        self.loop_start.timeChanged.connect(self._emit_options_changed)
-        self.loop_end.timeChanged.connect(self._emit_options_changed)
 
     def _emit_options_changed(self):
         self.option_changed.emit(self.options())
@@ -855,8 +899,6 @@ class OptionsDialog(QDialog):
         self.adx_weight.setValue(int(options["indicator_adx_weight"]))
         self.vwap_weight.setValue(int(options["indicator_vwap_weight"]))
         self.email_to.setText(str(options["email_results_to"]))
-        self.loop_start.setTime(qt_time_from_python(options["loop_active_start"]))
-        self.loop_end.setTime(qt_time_from_python(options["loop_active_end"]))
 
     def options(self):
         return {
@@ -886,8 +928,6 @@ class OptionsDialog(QDialog):
             "europe_market_end": DEFAULT_APP_OPTIONS["europe_market_end"],
             "us_market_start": DEFAULT_APP_OPTIONS["us_market_start"],
             "us_market_end": DEFAULT_APP_OPTIONS["us_market_end"],
-            "loop_active_start": python_time_from_qt(self.loop_start.time()),
-            "loop_active_end": python_time_from_qt(self.loop_end.time()),
         }
 
 
@@ -946,6 +986,7 @@ class AnalysisThread(QThread):
     def __init__(self, tickers):
         super().__init__()
         self.tickers = tickers
+        self.failed_tickers = []
         self._stop_requested = False
 
     def request_stop(self):
@@ -968,6 +1009,7 @@ class AnalysisThread(QThread):
                 return
 
             if stock_data is None:
+                self.failed_tickers.append(ticker)
                 self.progress.emit(error_msg)
                 continue
 
@@ -1021,12 +1063,60 @@ class AnalysisThread(QThread):
                 }
                 results.append(result)
                 self.result_ready.emit(result)
-            except Exception as exc:
+            except (TypeError, ValueError, KeyError, IndexError, RuntimeError, OSError) as exc:
+                self.failed_tickers.append(ticker)
                 self.progress.emit(f"Error procesando {ticker}: {exc}")
 
             time.sleep(DELAY_BETWEEN_REQUESTS)
 
         self.finished.emit(results)
+
+
+def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
+    """
+    Crea A_Punto.txt con los valores cuyo Score sea estrictamente superior
+    a min_score, conservando el formato TradingView:
+        NASDAQ:GNTX,NYSE:HPE,LSE:IES,...
+    """
+    selected = [
+        row for row in results
+        if int(row.get("Score", 0)) > min_score
+    ]
+
+    symbols = []
+    seen = set()
+
+    for row in selected:
+        normalized = str(row.get("Ticker", "")).strip().upper()
+        if not normalized:
+            continue
+
+        # Preferir la notacion original de la lista.
+        tv_symbol = ORIGINAL_TICKER_MAP.get(normalized, "")
+        if not tv_symbol:
+            tv_symbol = build_tradingview_symbol(normalized)
+
+        tv_symbol = tv_symbol.strip().upper()
+        if tv_symbol and tv_symbol not in seen:
+            seen.add(tv_symbol)
+            symbols.append(tv_symbol)
+
+    output_path = Path(filename)
+    with open(output_path, "w", encoding="utf-8", newline="") as file:
+        file.write(",".join(symbols))
+        if symbols:
+            file.write("\n")
+
+    return output_path, len(symbols)
+
+
+def export_unanalyzed_tickers(tickers, filename=FAILED_TICKERS_FILE):
+    values = list(dict.fromkeys(
+        str(ticker).strip() for ticker in tickers if str(ticker).strip()
+    ))
+    output_path = Path(filename)
+    output_path.write_text("\n".join(values) + ("\n" if values else ""), encoding="utf-8")
+    return output_path, len(values)
 
 
 class MainWindow(QMainWindow):
@@ -1037,9 +1127,11 @@ class MainWindow(QMainWindow):
         if icon_path.exists():
             icon = QIcon(str(icon_path))
             self.setWindowIcon(icon)
-            app = QApplication.instance()
-            if app is not None:
-                app.setWindowIcon(icon)
+            qapp = QApplication.instance()
+            if qapp is not None:
+                qapp.setWindowIcon(icon)
+
+        self._open_chart_dialogs = []
 
         uic.loadUi(UI_FILE, self)
         self.apply_visual_style()
@@ -1061,7 +1153,7 @@ class MainWindow(QMainWindow):
             self.E_Ticker.setSelectionMode(self.E_Ticker.SelectionMode.SingleSelection)
             self.E_Ticker.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
             self._ticker_is_model = True
-        except Exception:
+        except (AttributeError, TypeError, RuntimeError):
             # Si falla, tratamos E_Ticker como QTextEdit
             self.E_Ticker_model = None
             self._ticker_is_model = False
@@ -1079,7 +1171,7 @@ class MainWindow(QMainWindow):
             else:
                 if isinstance(self.E_Ticker, QTextEdit):
                     self.E_Ticker.textChanged.connect(self.on_e_ticker_edited)
-        except Exception:
+        except (AttributeError, TypeError, RuntimeError):
             pass
 
         self.E_Visor_model = QStringListModel()
@@ -1089,6 +1181,8 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.clicked.connect(self.on_b_carpeta)
         self.B_Ticker.clicked.connect(self.on_b_analizar)
         self.B_Cancelar.clicked.connect(self.on_b_cancelar)
+        self.B_Reiniciar.clicked.connect(self.on_b_reiniciar)
+        self.B_Reiniciar.setEnabled(False)
         self.B_Borrar = getattr(self, "B_Borrar", None)
         if self.B_Borrar is None:
             self.B_Borrar = self.B_LimpiarResultados
@@ -1124,7 +1218,6 @@ class MainWindow(QMainWindow):
         self.analysis_clear_results = False
         self.analysis_replace_results = False
         self.analysis_show_current_results = False
-        self._loop_market_close_handled = False
         self.lcd_Reloj.setDigitCount(8)
         if hasattr(self, "lcd_Loop"):
             self.lcd_Loop.setDigitCount(8)
@@ -1238,7 +1331,7 @@ class MainWindow(QMainWindow):
             }
 
             QTextEdit, QListView, QTableWidget, QLineEdit, QComboBox, QSpinBox,
-            QDoubleSpinBox, QTimeEdit {
+            QDoubleSpinBox {
                 background-color: #fbfdff;
                 border: 1px solid #c5d0d9;
                 border-radius: 5px;
@@ -1247,7 +1340,7 @@ class MainWindow(QMainWindow):
             }
 
             QTextEdit:focus, QListView:focus, QTableWidget:focus, QLineEdit:focus,
-            QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTimeEdit:focus {
+            QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
                 border: 1px solid #2687b2;
             }
 
@@ -1388,14 +1481,6 @@ class MainWindow(QMainWindow):
                 options[key],
             )
 
-        for key in (
-            "loop_active_start",
-            "loop_active_end",
-        ):
-            options[key] = text_to_time(
-                self.settings.value(key, time_to_text(options[key])),
-                DEFAULT_APP_OPTIONS[key],
-            )
         return options
 
     def _settings_bool(self, key, default):
@@ -1428,43 +1513,35 @@ class MainWindow(QMainWindow):
         self.settings.sync()
 
     def apply_app_options(self, options, save=True):
-        global PERIOD, INTERVAL, DELAY_BETWEEN_REQUESTS, EXPORT_EXCEL, EXCEL_NAME
-        global MIN_SCORE_TO_DISPLAY, EMAIL_MIN_SCORE, EMAIL_RESULTS_TO
-        global RSI_PERIOD, RSI_OVERBOUGHT, RSI_OVERSOLD, RSI_WEIGHT
-        global MACD_FAST, MACD_SLOW, MACD_SIGNAL, MACD_WEIGHT
-        global PER_MAX, PER_WEIGHT
-        global ADX_PERIOD, ADX_THRESHOLD, ADX_WEIGHT, VWAP_WEIGHT
-        global EUROPE_MARKET_START, EUROPE_MARKET_END, US_MARKET_START, US_MARKET_END
-        global LOOP_ACTIVE_START, LOOP_ACTIVE_END
-
-        PERIOD = str(options["period"])
-        INTERVAL = str(options["interval"])
-        DELAY_BETWEEN_REQUESTS = float(options["delay_between_requests"])
-        EXPORT_EXCEL = bool(options["export_excel"])
-        EXCEL_NAME = str(options["excel_name"])
-        MIN_SCORE_TO_DISPLAY = int(options["min_score_to_display"])
-        EMAIL_MIN_SCORE = int(options["email_min_score"])
-        EMAIL_RESULTS_TO = str(options["email_results_to"])
-        RSI_PERIOD = int(options["indicator_rsi_period"])
-        RSI_OVERBOUGHT = int(options["indicator_rsi_overbought"])
-        RSI_OVERSOLD = int(options["indicator_rsi_oversold"])
-        RSI_WEIGHT = int(options["indicator_rsi_weight"])
-        MACD_FAST = int(options["indicator_macd_fast"])
-        MACD_SLOW = int(options["indicator_macd_slow"])
-        MACD_SIGNAL = int(options["indicator_macd_signal"])
-        MACD_WEIGHT = int(options["indicator_macd_weight"])
-        PER_MAX = float(options["indicator_per_max"])
-        PER_WEIGHT = int(options["indicator_per_weight"])
-        ADX_PERIOD = int(options["indicator_adx_period"])
-        ADX_THRESHOLD = int(options["indicator_adx_threshold"])
-        ADX_WEIGHT = int(options["indicator_adx_weight"])
-        VWAP_WEIGHT = int(options["indicator_vwap_weight"])
-        EUROPE_MARKET_START = options["europe_market_start"]
-        EUROPE_MARKET_END = options["europe_market_end"]
-        US_MARKET_START = options["us_market_start"]
-        US_MARKET_END = options["us_market_end"]
-        LOOP_ACTIVE_START = options["loop_active_start"]
-        LOOP_ACTIVE_END = options["loop_active_end"]
+        config_values = {
+            "PERIOD": str(options["period"]),
+            "INTERVAL": str(options["interval"]),
+            "DELAY_BETWEEN_REQUESTS": float(options["delay_between_requests"]),
+            "EXPORT_EXCEL": bool(options["export_excel"]),
+            "EXCEL_NAME": str(options["excel_name"]),
+            "MIN_SCORE_TO_DISPLAY": int(options["min_score_to_display"]),
+            "EMAIL_MIN_SCORE": int(options["email_min_score"]),
+            "EMAIL_RESULTS_TO": str(options["email_results_to"]),
+            "RSI_PERIOD": int(options["indicator_rsi_period"]),
+            "RSI_OVERBOUGHT": int(options["indicator_rsi_overbought"]),
+            "RSI_OVERSOLD": int(options["indicator_rsi_oversold"]),
+            "RSI_WEIGHT": int(options["indicator_rsi_weight"]),
+            "MACD_FAST": int(options["indicator_macd_fast"]),
+            "MACD_SLOW": int(options["indicator_macd_slow"]),
+            "MACD_SIGNAL": int(options["indicator_macd_signal"]),
+            "MACD_WEIGHT": int(options["indicator_macd_weight"]),
+            "PER_MAX": float(options["indicator_per_max"]),
+            "PER_WEIGHT": int(options["indicator_per_weight"]),
+            "ADX_PERIOD": int(options["indicator_adx_period"]),
+            "ADX_THRESHOLD": int(options["indicator_adx_threshold"]),
+            "ADX_WEIGHT": int(options["indicator_adx_weight"]),
+            "VWAP_WEIGHT": int(options["indicator_vwap_weight"]),
+            "EUROPE_MARKET_START": options["europe_market_start"],
+            "EUROPE_MARKET_END": options["europe_market_end"],
+            "US_MARKET_START": options["us_market_start"],
+            "US_MARKET_END": options["us_market_end"],
+        }
+        apply_runtime_config(config_values)
 
         self.app_options = options.copy()
         if save:
@@ -1526,7 +1603,7 @@ class MainWindow(QMainWindow):
                 self.E_Resultados.setColumnWidth(col, column_widths.get(name, 100))
             score_col = headers.index("Score")
             header.setSortIndicator(score_col, Qt.SortOrder.DescendingOrder)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
         self.E_Resultados.setSortingEnabled(True)
 
@@ -1582,7 +1659,7 @@ class MainWindow(QMainWindow):
             return self.E_Tiempo.toPlainText().strip()
         try:
             return self.E_Tiempo.text().strip()
-        except Exception:
+        except (AttributeError, TypeError):
             return ""
 
     def _set_e_tiempo_text(self, text):
@@ -1594,7 +1671,7 @@ class MainWindow(QMainWindow):
             return
         try:
             self.E_Tiempo.setText(text)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
 
     def _enforce_e_tiempo_numbers(self):
@@ -1642,10 +1719,6 @@ class MainWindow(QMainWindow):
     def _time_to_seconds(self, value):
         return value.hour * 3600 + value.minute * 60 + value.second
 
-    def _is_loop_time_allowed(self, now=None):
-        now_time = (now or datetime.now()).time()
-        return LOOP_ACTIVE_START <= now_time < LOOP_ACTIVE_END
-
     def _market_progress_percent(self, now_time, start_time, end_time):
         start_seconds = self._time_to_seconds(start_time)
         end_seconds = self._time_to_seconds(end_time)
@@ -1678,29 +1751,9 @@ class MainWindow(QMainWindow):
         self._set_market_progress("P_MercadoEuropeo", europe_percent)
         self._set_market_progress("P_MercadoAmericano", us_percent)
 
-    def _stop_loop_for_market_close(self):
-        if self.loop_timer.isActive():
-            self.loop_timer.stop()
-        if self.analysis_thread and self.analysis_thread.isRunning():
-            self.analysis_thread.request_stop()
-            self.B_Cancelar.setEnabled(False)
-            self.append_to_visor("Cierre de horario: cancelando análisis en curso.")
-        if self.C_Tiempo.isChecked():
-            self.C_Tiempo.setChecked(False)
-        else:
-            self.update_lcd_reloj()
-        self.append_to_visor(
-            f"Loop detenido: fuera del horario {time_to_text(LOOP_ACTIVE_START)} - "
-            f"{time_to_text(LOOP_ACTIVE_END)}."
-        )
-
     def _schedule_next_timed_analysis(self):
         if not self.C_Tiempo.isChecked():
             self._stop_loop_timer()
-            return
-
-        if not self._is_loop_time_allowed():
-            self._stop_loop_for_market_close()
             return
 
         minutes = self._get_loop_minutes(show_warning=False)
@@ -1722,14 +1775,6 @@ class MainWindow(QMainWindow):
     def update_lcd_reloj(self):
         self.update_market_progress_bars()
         self.lcd_Reloj.display(datetime.now().strftime("%H:%M:%S"))
-
-        if self.C_Tiempo.isChecked():
-            if self._is_loop_time_allowed():
-                self._loop_market_close_handled = False
-            elif not self._loop_market_close_handled:
-                self._loop_market_close_handled = True
-                self._stop_loop_for_market_close()
-                return
 
         loop_lcd = getattr(self, "lcd_Loop", None)
         if loop_lcd is None:
@@ -1884,8 +1929,12 @@ class MainWindow(QMainWindow):
             for p in parts:
                 if not p:
                     continue
-                p = normalize_ticker(p)
+                original = p.strip().upper()
+                if original.startswith("###"):
+                    continue
+                p = normalize_ticker(original)
                 if p:
+                    ORIGINAL_TICKER_MAP.setdefault(p, original)
                     combined.append(p)
 
         # eliminar duplicados preservando orden
@@ -1927,6 +1976,7 @@ class MainWindow(QMainWindow):
         show_current_results=False,
     ):
         self._stop_loop_timer()
+        self.current_tickers = list(tickers)
         self.analysis_clear_results = clear_results
         self.analysis_replace_results = replace_results
         self.analysis_show_current_results = show_current_results
@@ -1938,6 +1988,7 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.setEnabled(False)
         self.B_Ticker.setEnabled(False)
         self.B_Cancelar.setEnabled(True)
+        self.B_Reiniciar.setEnabled(False)
 
         self.analysis_thread = AnalysisThread(tickers)
         self.analysis_thread.progress.connect(self.append_to_visor)
@@ -1960,9 +2011,9 @@ class MainWindow(QMainWindow):
             # Limpiar visor y otras ventanas de texto
             try:
                 self.clear_visor()
-            except Exception:
+            except (AttributeError, TypeError, RuntimeError):
                 pass
-        except Exception:
+        except (AttributeError, TypeError, RuntimeError, ValueError):
             pass
 
     def on_result_double_clicked(self, row, _column):
@@ -2078,10 +2129,20 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.setEnabled(True)
         self.B_Ticker.setEnabled(True)
         self.B_Cancelar.setEnabled(False)
+        self.B_Reiniciar.setEnabled(bool(self.current_tickers))
         self._schedule_next_timed_analysis()
 
         self.analysis_replace_results = False
         self.analysis_show_current_results = False
+
+        try:
+            failed_tickers = getattr(self.analysis_thread, "failed_tickers", [])
+            failed_path, failed_count = export_unanalyzed_tickers(failed_tickers)
+            self.append_to_visor(
+                f"Valores no analizados: {failed_count} -> {failed_path}"
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            self.append_to_visor(f"Error creando {FAILED_TICKERS_FILE}: {exc}")
 
         result_keys = {
             (row.get("Ticker"), row.get("Fecha"))
@@ -2094,8 +2155,26 @@ class MainWindow(QMainWindow):
                 self._add_result_to_table(row)
                 result_keys.add(key)
 
+        try:
+            a_punto_path, a_punto_count = export_a_punto(self.cumulative_results)
+            self.append_to_visor(
+                f"A_Punto.txt creado: {a_punto_count} valores con Score > "
+                f"{A_PUNTO_MIN_SCORE} -> {a_punto_path}"
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            self.append_to_visor(f"Error creando A_Punto.txt: {exc}")
+
         if not results and not self.cumulative_results:
             self.append_to_visor("No se generaron resultados.")
+            if EXPORT_EXCEL:
+                empty_export_path = Path(EXCEL_NAME).with_suffix(".txt")
+                try:
+                    empty_export_path.write_text("", encoding="utf-8")
+                    self.append_to_visor(
+                        f"Lista TradingView exportada: {empty_export_path} (sin resultados)"
+                    )
+                except (OSError, TypeError, ValueError) as exc:
+                    self.append_to_visor(f"Error exportando lista .txt: {exc}")
             return
 
         if not self.cumulative_results:
@@ -2115,7 +2194,10 @@ class MainWindow(QMainWindow):
             )
 
         if EXPORT_EXCEL:
-            df = pd.DataFrame(self.cumulative_results)
+            export_df = pd.DataFrame(self.cumulative_results)
+            if export_df.empty:
+                self.append_to_visor("No hay resultados exportables para la lista TradingView.")
+                return
             try:
                 # Construir archivo .txt en formato compatible con TradingView
                 tv_file = Path(EXCEL_NAME).with_suffix(".txt")
@@ -2206,7 +2288,7 @@ class MainWindow(QMainWindow):
                         f.write(line + "\n")
 
                 self.append_to_visor(f"Lista TradingView exportada: {tv_file}")
-            except Exception as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 self.append_to_visor(f"Error exportando lista .txt: {exc}")
 
         high_score_results = [
@@ -2220,7 +2302,7 @@ class MainWindow(QMainWindow):
                     "Configura PYTRADER_SMTP_HOST, PYTRADER_SMTP_USER y "
                     "PYTRADER_SMTP_PASSWORD para activar el envio automatico."
                 )
-        except Exception as exc:
+        except (OSError, ValueError, smtplib.SMTPException, ConnectionError) as exc:
             self.append_to_visor(f"Error enviando correo: {exc}")
 
     def on_analysis_error(self, message):
@@ -2243,16 +2325,6 @@ class MainWindow(QMainWindow):
             self.append_to_visor("Loop desactivado.")
             return
 
-        if not self._is_loop_time_allowed():
-            QMessageBox.warning(
-                self,
-                "Loop fuera de horario",
-                f"El loop solo puede activarse entre las "
-                f"{time_to_text(LOOP_ACTIVE_START)} y las {time_to_text(LOOP_ACTIVE_END)}.",
-            )
-            self.C_Tiempo.setChecked(False)
-            return
-
         if not self._get_loop_minutes(show_warning=True):
             self.C_Tiempo.setChecked(False)
             return
@@ -2266,7 +2338,6 @@ class MainWindow(QMainWindow):
             self.C_Tiempo.setChecked(False)
             return
 
-        self._loop_market_close_handled = False
         self.append_to_visor("Loop activado.")
         if not (self.analysis_thread and self.analysis_thread.isRunning()):
             self._schedule_next_timed_analysis()
@@ -2275,9 +2346,6 @@ class MainWindow(QMainWindow):
     def on_loop_timer_timeout(self):
         self.update_lcd_reloj()
         if not self.C_Tiempo.isChecked():
-            return
-        if not self._is_loop_time_allowed():
-            self._stop_loop_for_market_close()
             return
         if self.analysis_thread and self.analysis_thread.isRunning():
             self._schedule_next_timed_analysis()
@@ -2333,6 +2401,16 @@ class MainWindow(QMainWindow):
             self.analysis_thread.request_stop()
             self.append_to_visor("Cancelando análisis...")
             self.B_Cancelar.setEnabled(False)
+
+    def on_b_reiniciar(self):
+        if self.analysis_thread and self.analysis_thread.isRunning():
+            return
+        if not self.current_tickers:
+            return
+
+        tickers = list(self.current_tickers)
+        self.append_to_visor("Reiniciando análisis desde el principio...")
+        self.start_analysis(tickers, clear_results=True, replace_results=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Análisis deacciones con indicadores de PyTrader">
+  <title>PyTrader Web</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Mercados financieros</p>
+        <h1>PyTrader <span>Web</span></h1>
+        <p>Analiza acciones y descubre señales con indicadores de mercado.</p>
+      </div>
+      <div class="status-pill" id="healthStatus"><span></span> Comprobando servicio</div>
+    </header>
+
+    <section class="workspace-panels">
+      <section class="panel list-panel" aria-labelledby="listHeading">
+        <div class="work-panel-heading">
+          <div>
+            <p class="eyebrow">Archivos seleccionados</p>
+            <h2 id="listHeading">LISTAS</h2>
+          </div>
+          <div class="list-import-actions">
+            <input id="listFiles" class="file-input" type="file" accept=".txt,text/plain" multiple>
+            <label class="file-button secondary-button" for="listFiles">Abrir archivos</label>
+            <input id="listFolder" class="file-input" type="file" accept=".txt,text/plain" webkitdirectory multiple>
+            <label class="file-button secondary-button" for="listFolder">Abrir carpeta</label>
+          </div>
+        </div>
+        <ul id="listsView" class="lists-view" aria-live="polite">
+          <li class="empty-list">Sin listas cargadas</li>
+        </ul>
+      </section>
+
+      <section id="activityPanel" class="panel activity-panel" aria-labelledby="activityHeading">
+        <div class="work-panel-heading">
+          <div>
+            <p class="eyebrow">Estado del análisis</p>
+            <h2 id="activityHeading">Actividad</h2>
+          </div>
+          <div id="activityIndicator" class="activity-indicator">
+            <span></span><strong id="activityState">En espera</strong>
+          </div>
+        </div>
+        <output id="currentTicker" class="current-ticker">—</output>
+        <p id="activityMessage" class="activity-message">Selecciona una lista para comenzar.</p>
+        <div class="progress-row">
+          <progress id="analysisProgress" value="0" max="1"></progress>
+          <span id="progressLabel">0 / 0</span>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel controls-panel">
+      <div class="field">
+        <label for="period">Periodo</label>
+        <select id="period">
+          <option value="1y">1 año</option>
+          <option value="6mo">6 meses</option>
+          <option value="3mo">3 meses</option>
+          <option value="1mo">1 mes</option>
+          <option value="5d">5 días</option>
+          <option value="1d">1 día</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="interval">Intervalo</label>
+        <select id="interval">
+          <option value="1d">Diario</option>
+          <option value="1w">Semanal</option>
+          <option value="1mo">Mensual</option>
+          <option value="1h">Horario</option>
+          <option value="15m">15 minutos</option>
+        </select>
+      </div>
+      <div class="analysis-actions">
+        <button class="primary-button" id="analyzeButton" disabled>Analizar listas</button>
+        <button class="stop-button" id="stopAnalysisButton" type="button" disabled>Detener</button>
+      </div>
+    </section>
+
+    <section class="panel results-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Resultados</p>
+          <h2>Señales de mercado</h2>
+        </div>
+        <div class="filters">
+          <label class="compact-field"><span>Buscar</span><input id="filterText" placeholder="Ticker o señal"></label>
+          <label class="compact-field"><span>Score mínimo</span><input id="filterScore" type="number" min="0" max="100" value="0"></label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th><th>Signal</th><th>Score</th><th>Precio</th><th>RSI</th><th>MACD</th><th>ADX</th><th>VWAP</th><th>Fecha</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody">
+            <tr><td colspan="9" class="empty-state">Carga una lista para iniciar el análisis.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="message" id="statusMessage" role="status"></div>
+    </section>
+
+    <section class="panel email-panel">
+      <div>
+        <p class="eyebrow">Notificaciones</p>
+        <h2>Enviar resultados por correo</h2>
+        <p>Los credenciales se gestionan en el servidor y no se almacenan en el navegador.</p>
+      </div>
+      <form id="emailForm" class="email-form">
+        <label><span>Destino</span><input id="emailTo" type="email" required placeholder="usuario@example.com"></label>
+        <label><span>Asunto</span><input id="emailSubject" value="PyTrader resultados"></label>
+        <label class="field-wide"><span>Mensaje</span><input id="emailText" value="Resultados con score alto:"></label>
+        <button class="secondary-button field-wide" type="submit">Enviar correo</button>
+      </form>
+    </section>
+  </main>
+
+  <button class="config-fab" id="configButton" type="button" aria-label="Abrir configuración" aria-haspopup="dialog" aria-controls="configDialog" title="Configuración">
+    <span aria-hidden="true">⚙</span>
+  </button>
+
+  <dialog id="configDialog" class="config-dialog" aria-labelledby="configTitle">
+    <form id="configForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Personalización</p>
+          <h2 id="configTitle">Configuración</h2>
+        </div>
+        <button class="icon-button" id="closeConfigButton" type="button" aria-label="Cerrar configuración">×</button>
+      </div>
+      <div class="config-grid">
+        <label><span>Periodo</span><select id="configPeriod"><option value="1y">1 año</option><option value="6mo">6 meses</option><option value="3mo">3 meses</option><option value="1mo">1 mes</option><option value="5d">5 días</option><option value="1d">1 día</option></select></label>
+        <label><span>Intervalo</span><select id="configInterval"><option value="1d">Diario</option><option value="1w">Semanal</option><option value="1mo">Mensual</option><option value="1h">Horario</option><option value="15m">15 minutos</option></select></label>
+        <label><span>RSI (periodo)</span><input id="configRsiPeriod" type="number" min="2" max="200" value="14"></label>
+        <label><span>MACD rápido</span><input id="configMacdFast" type="number" min="2" max="200" value="12"></label>
+        <label><span>MACD lento</span><input id="configMacdSlow" type="number" min="3" max="200" value="26"></label>
+        <label><span>MACD señal</span><input id="configMacdSignal" type="number" min="2" max="200" value="9"></label>
+        <label><span>ADX (periodo)</span><input id="configAdxPeriod" type="number" min="2" max="200" value="14"></label>
+        <label><span>Score mínimo</span><input id="configMinScore" type="number" min="0" max="100" value="0"></label>
+      </div>
+      <p id="configError" class="config-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="secondary-button" id="resetConfigButton" type="button">Restaurar</button>
+        <button class="primary-button" type="submit">Guardar configuración</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

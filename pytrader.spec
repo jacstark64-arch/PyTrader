@@ -1,8 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import sys
 
 ROOT = Path(SPECPATH)
+ICON_FILE = ROOT / "pytrader.ico"
+if not ICON_FILE.exists() and sys.platform != "win32":
+    ICON_FILE = ROOT / "lupa-diagrama-negocios.png"
+if not ICON_FILE.exists():
+    ICON_FILE = None
 
 a = Analysis(
     ["F_Trader_4.py"],
@@ -29,7 +35,7 @@ exe = EXE(
     a.datas,
     [],
     name="PyTrader",
-    icon="lupa-diagrama-negocios.png",
+    icon=str(ICON_FILE) if ICON_FILE else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

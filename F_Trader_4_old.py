@@ -1,6 +1,6 @@
 #*******************************************************************
 #
-#            09/10/2026
+#            05/10/2026
 #            PyTrader V5
 #
 #***********************************************************
@@ -246,7 +246,7 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
     # Sufijos comunes para exchanges europeos (se intentan si no vienen en el ticker)
     eu_suffixes = [
         ".MC", ".PA", ".L", ".DE", ".F", ".AS", ".MI", ".HE", ".ST",
-        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX", ".SSE", "RUS" 
+        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX",
     ]
 
     def try_download(sym):
@@ -275,10 +275,7 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
 
                 return stock_data, None
 
-            # yfinance añade excepciones propias según el proveedor (p. ej. rate
-            # limit o símbolo no disponible). Si no se capturan, se interrumpe
-            # el análisis antes de poder probar las demás variantes del ticker.
-            except Exception as exc:  # pylint: disable=broad-exception-caught
+            except (OSError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
                 if attempt < max_retries - 1:
                     time.sleep(2)
                 else:
@@ -1077,7 +1074,7 @@ class AnalysisThread(QThread):
                 }
                 results.append(result)
                 self.result_ready.emit(result)
-            except Exception as exc:
+            except (TypeError, ValueError, KeyError, IndexError, RuntimeError, OSError) as exc:
                 self.failed_tickers.append(ticker)
                 self.progress.emit(f"Error procesando {ticker}: {exc}")
 
@@ -2359,7 +2356,7 @@ class MainWindow(QMainWindow):
                     "Configura PYTRADER_SMTP_HOST, PYTRADER_SMTP_USER y "
                     "PYTRADER_SMTP_PASSWORD para activar el envio automatico."
                 )
-        except Exception as exc:
+        except (OSError, ValueError, smtplib.SMTPException, ConnectionError) as exc:
             self.append_to_visor(f"Error enviando correo: {exc}")
 
     def on_analysis_error(self, message):

@@ -23,6 +23,17 @@ const STOOQ_INTERVALS = new Map([
 ]);
 const YAHOO_UNAVAILABLE_MESSAGE = 'La pagina web no esta operativa. Yahoo Finance limito las solicitudes.';
 const STOOQ_TIMEOUT_MS = 10000;
+// Variantes que también prueba F_Trader_4.py para tickers europeos sin sufijo.
+const YAHOO_SUFFIXES = [
+  '.MC', '.PA', '.L', '.DE', '.F', '.AS', '.MI', '.HE', '.ST',
+  '.SW', '.OL', '.CO', '.BR', '.LS', '.VI', '.AX', '.SSE', 'RUS',
+];
+
+function yahooTickerCandidates(ticker) {
+  const normalized = String(ticker || '').trim().toUpperCase();
+  if (!normalized || normalized.includes('.') || normalized.includes(':')) return [normalized];
+  return [normalized, ...YAHOO_SUFFIXES.map((suffix) => `${normalized}${suffix}`)];
+}
 
 function stooqDate(date) {
   return date.toISOString().slice(0, 10).replaceAll('-', '');
@@ -135,16 +146,23 @@ async function fetchMarketHistory(yf, ticker, period, interval) {
     }
   }
 
-  try {
-    return await fetchYahooHistory(yf, ticker, period, interval);
-  } catch (error) {
-    if (isYahooRateLimitError(error)) {
-      const unavailable = new Error(YAHOO_UNAVAILABLE_MESSAGE);
-      unavailable.code = 'MARKET_DATA_UNAVAILABLE';
-      throw unavailable;
+  let lastError;
+  for (const candidate of yahooTickerCandidates(ticker)) {
+    try {
+      const history = await fetchYahooHistory(yf, candidate, period, interval);
+      if (Array.isArray(history) && history.length > 0) return history;
+    } catch (error) {
+      if (isYahooRateLimitError(error)) {
+        const unavailable = new Error(YAHOO_UNAVAILABLE_MESSAGE);
+        unavailable.code = 'MARKET_DATA_UNAVAILABLE';
+        throw unavailable;
+      }
+      lastError = error;
     }
-    throw error;
   }
+
+  if (lastError) throw lastError;
+  return [];
 }
 
 function isMarketDataUnavailableError(error) {
@@ -160,5 +178,6 @@ module.exports = {
   isMarketDataUnavailableError,
   parseStooqCsv,
   stooqSymbolCandidates,
+  yahooTickerCandidates,
   toYahooHistoryOptions,
 };

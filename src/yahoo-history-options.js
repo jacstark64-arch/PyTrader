@@ -9,8 +9,10 @@ const PERIOD_DURATIONS = {
   '5y': 5 * 365 * 24 * 60 * 60 * 1000,
   max: null,
 };
-const RETRY_DELAYS_MS = [2000, 5000];
-const REQUEST_INTERVAL_MS = 500;
+// Yahoo limita las consultas automatizadas. Espaciar más las peticiones y
+// aplicar espera creciente reduce los 429 en análisis de listas grandes.
+const RETRY_DELAYS_MS = [10000, 30000];
+const REQUEST_INTERVAL_MS = 2000;
 
 let requestQueue = Promise.resolve();
 

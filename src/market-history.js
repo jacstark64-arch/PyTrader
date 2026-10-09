@@ -22,6 +22,7 @@ const STOOQ_INTERVALS = new Map([
   ['1mo', 'm'],
 ]);
 const YAHOO_UNAVAILABLE_MESSAGE = 'La pagina web no esta operativa. Yahoo Finance limito las solicitudes.';
+const STOOQ_TIMEOUT_MS = 10000;
 
 function stooqDate(date) {
   return date.toISOString().slice(0, 10).replaceAll('-', '');
@@ -72,7 +73,7 @@ function stooqSymbolCandidates(ticker) {
 
 function requestText(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'PyTrader/0.1' } }, (response) => {
+    const request = https.get(url, { headers: { 'User-Agent': 'PyTrader/0.1' } }, (response) => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => {
@@ -85,7 +86,11 @@ function requestText(url) {
         }
         resolve(body);
       });
-    }).on('error', reject);
+    });
+    request.setTimeout(STOOQ_TIMEOUT_MS, () => {
+      request.destroy(new Error('Stooq no respondió dentro del tiempo límite.'));
+    });
+    request.on('error', reject);
   });
 }
 
@@ -124,7 +129,12 @@ async function fetchStooqHistory(ticker, period, interval, now = Date.now()) {
 
 async function fetchMarketHistory(yf, ticker, period, interval) {
   if (STOOQ_INTERVALS.has(interval)) {
-    return fetchStooqHistory(ticker, period, interval);
+    try {
+      const stooqHistory = await fetchStooqHistory(ticker, period, interval);
+      if (stooqHistory.length > 0) return stooqHistory;
+    } catch {
+      // Stooq puede no responder o no tener el símbolo. Yahoo se prueba abajo.
+    }
   }
 
   try {

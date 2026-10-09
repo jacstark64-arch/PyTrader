@@ -5,6 +5,7 @@ const {
   fetchMarketHistory,
   isMarketDataUnavailableError,
 } = require('../src/market-history');
+const { normalizeTicker } = require('../src/F_Trader_4');
 
 function loadDependencies() {
   const yf = require('yahoo-finance2').default;
@@ -117,7 +118,10 @@ async function analyzeTickers(input) {
 
   for (const ticker of request.tickers) {
     try {
-      const history = await fetchMarketHistory(yf, ticker, request.period, request.interval);
+      // TradingView style symbols (NASDAQ:SMCI) are not Yahoo Finance symbols.
+      // Convert only for the data lookup and keep the user's notation in results.
+      const yahooTicker = normalizeTicker(ticker);
+      const history = await fetchMarketHistory(yf, yahooTicker, request.period, request.interval);
       const rows = (history || []).map((row) => ({
         date: row.date,
         open: row.open,

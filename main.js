@@ -31,7 +31,7 @@ app.on('window-all-closed', () => {
 // Analysis handler: main process will perform downloads and indicator calculation
 ipcMain.handle('analyze', async (event, tickers, options) => {
   const yf = require('yahoo-finance2').default;
-  const { calculateIndicators } = require('./src/F_Trader_4');
+  const { calculateIndicators, normalizeTicker } = require('./src/F_Trader_4');
   const {
     YAHOO_UNAVAILABLE_MESSAGE,
     fetchMarketHistory,
@@ -41,7 +41,7 @@ ipcMain.handle('analyze', async (event, tickers, options) => {
   for (const ticker of tickers) {
     try {
       const params = { period: options.period || '1y', interval: options.interval || '1d' };
-      const hist = await fetchMarketHistory(yf, ticker, params.period, params.interval);
+      const hist = await fetchMarketHistory(yf, normalizeTicker(ticker), params.period, params.interval);
       if (!hist || hist.length === 0) {
         results.push({ ticker, error: 'Sin datos' });
         continue;

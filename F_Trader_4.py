@@ -1,7 +1,7 @@
-#*******************************************************************
+#***********************************************************
 #
-#            09/10/2026
-#            PyTrader V5
+#              15/10/2026
+#            Mi Screener V6
 #
 #***********************************************************
 import sys
@@ -530,7 +530,7 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None, eps_ttm=None, be
     rs = avg_gain / avg_loss.replace(0, np.nan)
     data["rsi"] = 100 - (100 / (1 + rs))
     data.loc[(avg_loss == 0) & (avg_gain > 0), "rsi"] = 100
-    data.loc[(avg_loss == 0) & (avg_gain == 0), "rsi"] = 50
+    data["rsi"] = data["rsi"].fillna(50)
     data["rsi_bullish"] = (data["rsi"] > 50) & (data["rsi"] > data["rsi"].shift(1))
     data["rsi_oversold"] = data["rsi"] <= rsi_oversold
     data["rsi_overbought"] = data["rsi"] >= rsi_overbought
@@ -1150,7 +1150,7 @@ class AnalysisThread(QThread):
                         else "DISTRIBUYENDO" if last["distribution"]
                         else "NEUTRO"
                     ),
-                    "RSI": round(float(last["rsi"]), 1) if pd.notna(last["rsi"]) else "N/A",
+                    "RSI": round(float(last["rsi"]), 1),
                     "RSI Vol.": round(float(last["rsi_volume"]), 2) if pd.notna(last["rsi_volume"]) else "N/A",
                     "Momentum": round(float(last["momentum"]), 2) if pd.notna(last["momentum"]) else "N/A",
                     "MACD": round(float(last["macd"]), 2),

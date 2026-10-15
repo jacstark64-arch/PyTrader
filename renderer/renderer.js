@@ -2,6 +2,7 @@ const btn = document.getElementById('btnAnalyze');
 const status = document.getElementById('status');
 const resultsTbody = document.querySelector('#results tbody');
 const filterText = document.getElementById('filterText');
+const filterSignal = document.getElementById('filterSignal');
 const filterScore = document.getElementById('filterScore');
 const btnSendEmail = document.getElementById('btnSendEmail');
 const btnAutoEmail = document.getElementById('btnAutoEmail');
@@ -42,10 +43,16 @@ function renderTable(results) {
   // apply filter
   const text = (filterText.value || '').toLowerCase();
   const minScore = parseInt(filterScore.value || '0', 10) || 0;
+  const signalFilter = filterSignal.value;
   let filtered = results.filter(r => {
     const s = (r.ticker || r.Ticker || '').toString().toLowerCase();
     const sig = (r.result ? (r.result.signal || '') : (r.Signal || '')).toString().toLowerCase();
     const score = parseInt(r.result ? (r.result.score || 0) : (r.Score || 0), 10) || 0;
+    const matchesSignal = !signalFilter
+      || (signalFilter === 'comprar' && sig.includes('compra'))
+      || (signalFilter === 'vender' && sig.includes('venta'))
+      || (signalFilter === 'esperar' && sig.includes('espera'));
+    if (!matchesSignal) return false;
     if (text) {
       if (!s.includes(text) && !sig.includes(text)) return false;
     }
@@ -123,6 +130,7 @@ document.querySelectorAll('#results thead th').forEach(th => {
 
 filterText.addEventListener('input', () => renderTable(lastResults));
 filterScore.addEventListener('input', () => renderTable(lastResults));
+filterSignal.addEventListener('change', () => renderTable(lastResults));
 
 async function sendEmailAction(auto=false) {
   const to = document.getElementById('emailTo').value.trim();

@@ -2,6 +2,7 @@ const analyzeButton = document.querySelector('#analyzeButton');
 const resultsBody = document.querySelector('#resultsBody');
 const statusMessage = document.querySelector('#statusMessage');
 const filterText = document.querySelector('#filterText');
+const filterSignal = document.querySelector('#filterSignal');
 const filterScore = document.querySelector('#filterScore');
 const emailForm = document.querySelector('#emailForm');
 const healthStatus = document.querySelector('#healthStatus');
@@ -150,12 +151,17 @@ function escapeHtml(value) {
 
 function renderResults() {
   const search = filterText.value.trim().toLowerCase();
+  const signalFilter = filterSignal.value;
   const minimumScore = Number(filterScore.value || 0);
   const filtered = lastResults.filter((item) => {
     const ticker = item.ticker.toLowerCase();
     const signal = (item.result?.signal || '').toLowerCase();
     const score = Number(item.result?.score || 0);
-    return (!search || ticker.includes(search) || signal.includes(search)) && score >= minimumScore;
+    const matchesSignal = !signalFilter
+      || (signalFilter === 'comprar' && signal.includes('compra'))
+      || (signalFilter === 'vender' && signal.includes('venta'))
+      || (signalFilter === 'esperar' && signal.includes('espera'));
+    return (!search || ticker.includes(search) || signal.includes(search)) && matchesSignal && score >= minimumScore;
   });
 
   if (filtered.length === 0) {
@@ -416,6 +422,7 @@ resetConfigButton.addEventListener('click', () => {
 listFilesInput.addEventListener('change', () => importLists(listFilesInput.files));
 listFolderInput.addEventListener('change', () => importLists(listFolderInput.files));
 filterText.addEventListener('input', renderResults);
+filterSignal.addEventListener('change', renderResults);
 filterScore.addEventListener('input', renderResults);
 loadConfig();
 checkHealth();

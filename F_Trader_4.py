@@ -36,6 +36,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QButtonGroup,
+    QPushButton,
     QTableWidgetItem,
     QMessageBox,
     QAbstractItemView,
@@ -1307,6 +1309,26 @@ class MainWindow(QMainWindow):
         self.E_Resultados.setShowGrid(False)
         self.E_Resultados.verticalHeader().setVisible(False)
         self.E_Resultados.verticalHeader().setDefaultSectionSize(30)
+        # Botones en una fila independiente para que el menú del filtro no
+        # aparezca encima de la tabla de resultados.
+        self.signal_filter_group = QButtonGroup(self.G_Resultados)
+        self.signal_filter_group.setExclusive(True)
+        self.signal_filter_value = "todas"
+        for index, (label, value) in enumerate((
+            ("Todas", "todas"),
+            ("Comprar", "comprar"),
+            ("Vender", "vender"),
+            ("Esperar", "esperar"),
+        )):
+            button = QPushButton(label, self.G_Resultados)
+            button.setCheckable(True)
+            button.setGeometry(925 + index * 88, 31, 82, 29)
+            button.setChecked(index == 0)
+            button.clicked.connect(
+                lambda checked, selected=value: self.set_signal_filter(selected)
+            )
+            self.signal_filter_group.addButton(button)
+        self.E_Resultados.setGeometry(10, 65, 1271, 640)
         self.E_Lista.setAlternatingRowColors(True)
         self.E_Visor.setAlternatingRowColors(True)
 
@@ -2233,6 +2255,34 @@ class MainWindow(QMainWindow):
             self.E_Resultados.setItem(row_idx, col_idx, item)
         self.E_Resultados.setSortingEnabled(True)
         self.E_Resultados.sortItems(columns.index("Score"), Qt.SortOrder.DescendingOrder)
+        self.apply_signal_filter()
+
+    def apply_signal_filter(self, *_args):
+        if not hasattr(self, "signal_filter_value") or not hasattr(self, "E_Resultados"):
+            return
+        selected = self.signal_filter_value
+        signal_col = next(
+            (col for col in range(self.E_Resultados.columnCount())
+             if (header := self.E_Resultados.horizontalHeaderItem(col))
+             and header.text().strip().lower() in {"signal", "señal"}),
+            None,
+        )
+        if signal_col is None:
+            return
+        for row in range(self.E_Resultados.rowCount()):
+            item = self.E_Resultados.item(row, signal_col)
+            signal = item.text().strip().upper() if item else ""
+            matches = (
+                selected == "todas"
+                or (selected == "comprar" and "COMPRA" in signal)
+                or (selected == "vender" and "VENTA" in signal)
+                or (selected == "esperar" and "ESPERA" in signal)
+            )
+            self.E_Resultados.setRowHidden(row, not matches)
+
+    def set_signal_filter(self, selected):
+        self.signal_filter_value = selected
+        self.apply_signal_filter()
 
     def _style_result_item(self, item, header, value):
         text = str(value).upper()

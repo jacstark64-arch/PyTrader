@@ -169,8 +169,8 @@ EUROPE_MARKET_START = dt_time(9, 30)
 EUROPE_MARKET_END = dt_time(17, 0)
 US_MARKET_START = dt_time(15, 30)
 US_MARKET_END = dt_time(22, 0)
-LOOP_ACTIVE_START = dt_time(10, 0)
-LOOP_ACTIVE_END = dt_time(21, 0)
+LOOP_ACTIVE_START = dt_time(8, 0)
+LOOP_ACTIVE_END = dt_time(22, 0)
 
 DEFAULT_APP_OPTIONS = {
     "period": PERIOD,

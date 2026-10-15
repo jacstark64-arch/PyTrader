@@ -32,12 +32,19 @@ app.on('window-all-closed', () => {
 ipcMain.handle('analyze', async (event, tickers, options) => {
   const yf = require('yahoo-finance2').default;
   const { calculateIndicators, normalizeTicker } = require('./src/F_Trader_4');
+  const { fetchTrailingEps } = require('./src/fundamentals');
   const {
     YAHOO_UNAVAILABLE_MESSAGE,
     fetchMarketHistory,
     isMarketDataUnavailableError,
   } = require('./src/market-history');
   const results = [];
+  let benchmark = [];
+  try {
+    benchmark = await fetchMarketHistory(yf, '^GSPC', options.period || '1y', options.interval || '1d') || [];
+  } catch {
+    // Beta remains unavailable without benchmark data.
+  }
   for (const ticker of tickers) {
     try {
       const params = { period: options.period || '1y', interval: options.interval || '1d' };
@@ -56,7 +63,8 @@ ipcMain.handle('analyze', async (event, tickers, options) => {
         volume: h.volume
       })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
-      const augmented = calculateIndicators(ohlcv, options.indicators || {});
+      const epsTtm = await fetchTrailingEps(yf, normalizeTicker(ticker));
+      const augmented = calculateIndicators(ohlcv, { ...options.indicators, epsTtm, benchmark });
       const last = augmented[augmented.length - 1] || null;
       results.push({ ticker, result: last });
     } catch (err) {

@@ -81,10 +81,10 @@ MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 MACD_WEIGHT = 5
-PER_MAX = 25
+PER_MAX = 20
 PER_WEIGHT = 5
 ADX_PERIOD = 14
-ADX_THRESHOLD = 20
+ADX_THRESHOLD = 25
 ADX_WEIGHT = 5
 VWAP_WEIGHT = 5
 
@@ -141,9 +141,16 @@ DEFAULT_RESULT_HEADERS = [
     "Flow",
     "Smart Money",
     "RSI",
+    "RSI Vol.",
+    "Momentum",
     "MACD",
     "PER",
     "ADX",
+    "VWMA",
+    "Riesgo %",
+    "Beta",
+    "Dif. %",
+    "Entrada Institucional",
     "VWAP",
     "Vol Relativo",
     "Fecha",
@@ -238,16 +245,10 @@ def apply_runtime_config(values):
 
 
 def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
-    """
-    Intenta descargar datos con yfinance. Si no se encuentran datos para el ticker
-    sin sufijo de exchange, intenta añadir sufijos comunes de exchanges europeos
-    para permitir analizar acciones de Europa.
-    """
-    # Sufijos comunes para exchanges europeos (se intentan si no vienen en el ticker)
-    eu_suffixes = [
-        ".MC", ".PA", ".L", ".DE", ".F", ".AS", ".MI", ".HE", ".ST",
-        ".SW", ".OL", ".CO", ".BR", ".LS", ".VI", ".AX", ".SSE", "RUS" 
-    ]
+    """Download the requested listing without guessing a different exchange."""
+    ticker = normalize_ticker(ticker)
+    if not ticker:
+        return None, "Ticker no valido."
 
     def try_download(sym):
         for attempt in range(max_retries):
@@ -284,31 +285,13 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
                 else:
                     return None, f"Error después de {max_retries} intentos: {str(exc)}"
 
-    # 1) Intentar con el ticker tal cual
     data, err = try_download(ticker)
     if data is not None:
         return data, None
 
-    # 2) Si el ticker no tiene sufijo (no contiene '.' ni ':'), probar sufijos EU
-    if "." not in ticker and ":" not in ticker:
-        for suf in eu_suffixes:
-            sym = ticker + suf
-            data, err = try_download(sym)
-            if data is not None:
-                return data, None
-
-    # 3) Si el ticker tenía sufijo, intentar con el símbolo base sin sufijo
-    if "." in ticker or ":" in ticker:
-        base = ticker.split(".")[0].split(":")[0]
-        if base != ticker:
-            data, err = try_download(base)
-            if data is not None:
-                return data, None
-
-    # 4) No se encontraron datos
     if err:
         return None, err
-    return None, f"Sin datos disponibles para {ticker} (intentadas variaciones)"
+    return None, f"Sin datos disponibles para {ticker}."
 
 
 
@@ -424,32 +407,50 @@ def normalize_ticker(ticker):
     return ticker.replace(" ", "").replace("/", "-")
 
 
-def get_pe_ratio(ticker):
+def get_trailing_eps(ticker):
     try:
-        ticker_obj = yf.Ticker(ticker)
-        fast_info = getattr(ticker_obj, "fast_info", None)
-        if fast_info is not None:
-            for key in ("forwardPE", "trailingPE"):
-                value = getattr(fast_info, key, None)
-                if value not in (None, 0):
-                    return float(value)
-
+        ticker_obj = yf.Ticker(normalize_ticker(ticker))
         info = getattr(ticker_obj, "info", None) or {}
-        if isinstance(info, dict):
-            for key in ("forwardPE", "trailingPE", "pegRatio"):
-                value = info.get(key)
-                if value not in (None, 0):
-                    return float(value)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
+        if info.get("currency") and info.get("financialCurrency") and info["currency"] != info["financialCurrency"]:
+            return None
+        value = info.get("trailingEps")
+        if value is not None and np.isfinite(float(value)) and float(value) != 0:
+            return float(value)
+    except Exception:  # A missing provider response must not create a fundamental.
         return None
     return None
 
 
-def calculate_indicators(dataframe, pe_ratio=None, params=None):
+def get_pe_ratio(ticker, price=None):
+    if price is not None:
+        eps = get_trailing_eps(ticker)
+        return float(price) / eps if eps is not None and np.isfinite(float(price)) else None
+    try:
+        info = yf.Ticker(normalize_ticker(ticker)).info or {}
+        value = info.get("trailingPE")
+        if value is not None and np.isfinite(float(value)) and float(value) != 0:
+            return float(value)
+    except Exception:
+        return None
+    return None
+
+
+def wilder_average(values, period):
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    valid = values.dropna()
+    if len(valid) < period:
+        return result
+    seeded = valid.iloc[period - 1:].copy()
+    seeded.iloc[0] = valid.iloc[:period].mean()
+    result.loc[seeded.index] = seeded.ewm(alpha=1 / period, adjust=False).mean()
+    return result
+
+
+def calculate_indicators(dataframe, pe_ratio=None, params=None, eps_ttm=None, benchmark=None):
     """
     Calcula indicadores Smart Money, CFI, Flow, Tendencia, RSI, MACD, PER y señales.
     """
-    data = dataframe.copy()
+    data = dataframe.sort_index().copy()
     indicator_params = {
         "rsi_period": 14,
         "rsi_overbought": 70,
@@ -459,12 +460,20 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
         "macd_slow": 26,
         "macd_signal": 9,
         "score_weight_macd": 5,
-        "per_max": 25,
+        "per_max": 20,
         "score_weight_per": 5,
         "adx_period": 14,
-        "adx_threshold": 20,
+        "adx_threshold": 25,
         "score_weight_adx": 5,
         "score_weight_vwap": 5,
+        "momentum_period": 52,
+        "momentum_min": 1.0,
+        "momentum_max": 30.0,
+        "rsi_max_buy": 65.0,
+        "divergence_window": 10,
+        "volume_rsi_period": 14,
+        "vwma_period": 30,
+        "beta_period": 61,
     }
     if params:
         indicator_params.update(params)
@@ -477,10 +486,10 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     macd_slow = int(indicator_params.get("macd_slow", 26))
     macd_signal = int(indicator_params.get("macd_signal", 9))
     score_weight_macd = float(indicator_params.get("score_weight_macd", 5))
-    per_max = float(indicator_params.get("per_max", 25))
+    per_max = float(indicator_params.get("per_max", 20))
     score_weight_per = float(indicator_params.get("score_weight_per", 5))
     adx_period = int(indicator_params.get("adx_period", 14))
-    adx_threshold = float(indicator_params.get("adx_threshold", 20))
+    adx_threshold = float(indicator_params.get("adx_threshold", 25))
     score_weight_adx = float(indicator_params.get("score_weight_adx", 5))
     score_weight_vwap = float(indicator_params.get("score_weight_vwap", 5))
 
@@ -501,7 +510,8 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     weekly["cfi_w"] = weekly_cfi_raw.ewm(span=20, adjust=False).mean()
     weekly["cfi_w_ma"] = weekly["cfi_w"].ewm(span=20, adjust=False).mean()
     weekly["cfi_w_up"] = weekly["cfi_w"] > weekly["cfi_w_ma"]
-    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, fill_value=False).ffill()
+    # Only propagate completed weeks; never use a future weekly close.
+    data["cfi_w_up"] = weekly["cfi_w_up"].reindex(data.index, method="ffill").fillna(False)
 
     data["vol_ma"] = data["Volume"].rolling(50).mean()
     data["vol_strong"] = data["Volume"] > data["vol_ma"]
@@ -515,14 +525,46 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     delta = data["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=rsi_period, min_periods=rsi_period).mean()
-    avg_loss = loss.rolling(window=rsi_period, min_periods=rsi_period).mean()
+    avg_gain = wilder_average(gain, rsi_period)
+    avg_loss = wilder_average(loss, rsi_period)
     rs = avg_gain / avg_loss.replace(0, np.nan)
     data["rsi"] = 100 - (100 / (1 + rs))
-    data["rsi"] = data["rsi"].fillna(50)
+    data.loc[(avg_loss == 0) & (avg_gain > 0), "rsi"] = 100
+    data.loc[(avg_loss == 0) & (avg_gain == 0), "rsi"] = 50
     data["rsi_bullish"] = (data["rsi"] > 50) & (data["rsi"] > data["rsi"].shift(1))
     data["rsi_oversold"] = data["rsi"] <= rsi_oversold
     data["rsi_overbought"] = data["rsi"] >= rsi_overbought
+    data["rsi_up"] = (avg_gain.notna() & avg_gain.shift(1).notna() &
+                      (data["rsi"] > data["rsi"].shift(1)))
+    data["momentum"] = data["Close"].diff(int(indicator_params["momentum_period"]))
+    data["momentum_ok"] = (
+        (data["momentum"] > float(indicator_params["momentum_min"])) &
+        (data["momentum"] < float(indicator_params["momentum_max"]))
+    )
+
+    volume_delta = data["Volume"].diff()
+    volume_gain = wilder_average(volume_delta.clip(lower=0), int(indicator_params["volume_rsi_period"]))
+    volume_loss = wilder_average(-volume_delta.clip(upper=0), int(indicator_params["volume_rsi_period"]))
+    data["rsi_volume"] = 100 - 100 / (1 + volume_gain / volume_loss.replace(0, np.nan))
+    data.loc[(volume_loss == 0) & (volume_gain > 0), "rsi_volume"] = 100
+    data.loc[(volume_loss == 0) & (volume_gain == 0), "rsi_volume"] = 50
+    data["rsi_volume_up"] = data["rsi_volume"] > data["rsi_volume"].shift(1)
+    vwma_period = int(indicator_params["vwma_period"])
+    data["vwma"] = ((data["Close"] * data["Volume"]).rolling(vwma_period).sum() /
+                    data["Volume"].rolling(vwma_period).sum().replace(0, np.nan))
+    data["risk"] = (data["Close"] - data["vwma"]).abs() / data["Close"].replace(0, np.nan) * 100
+    data["change_pct"] = data["Close"].pct_change(fill_method=None) * 100
+    data["beta"] = np.nan
+    if benchmark is not None and not benchmark.empty:
+        benchmark_returns = benchmark.sort_index()["Close"].pct_change(fill_method=None)
+        benchmark_returns = benchmark_returns.reindex(data.index, method="ffill")
+        returns = data["Close"].pct_change(fill_method=None)
+        beta_period = int(indicator_params["beta_period"])
+        bench_std = benchmark_returns.rolling(beta_period).std(ddof=0)
+        data["beta"] = (
+            returns.rolling(beta_period).corr(benchmark_returns) *
+            returns.rolling(beta_period).std(ddof=0) / bench_std.replace(0, np.nan)
+        )
 
     ema_fast = data["Close"].ewm(span=macd_fast, adjust=False).mean()
     ema_slow = data["Close"].ewm(span=macd_slow, adjust=False).mean()
@@ -534,18 +576,34 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     data["vwap"] = (typical_price * data["Volume"]).cumsum() / data["Volume"].cumsum().replace(0, np.nan)
     data["vwap_bullish"] = data["Close"] > data["vwap"]
 
-    high_low = data["High"] - data["Low"]
+    true_range = pd.concat([
+        data["High"] - data["Low"],
+        (data["High"] - data["Close"].shift(1)).abs(),
+        (data["Low"] - data["Close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    true_range.iloc[0] = np.nan
     up_move = data["High"] - data["High"].shift(1)
     down_move = data["Low"].shift(1) - data["Low"]
-    plus_di = 100 * (up_move.where((up_move > down_move) & (up_move > 0), 0).rolling(adx_period).sum() / high_low.rolling(adx_period).sum().replace(0, np.nan))
-    minus_di = 100 * (down_move.where((down_move > up_move) & (down_move > 0), 0).rolling(adx_period).sum() / high_low.rolling(adx_period).sum().replace(0, np.nan))
-    dx = 100 * (np.abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan))
-    data["adx"] = dx.ewm(span=adx_period, adjust=False).mean()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+    plus_dm.iloc[0] = minus_dm.iloc[0] = np.nan
+    atr = wilder_average(true_range, adx_period)
+    plus_di = 100 * wilder_average(plus_dm, adx_period) / atr.replace(0, np.nan)
+    minus_di = 100 * wilder_average(minus_dm, adx_period) / atr.replace(0, np.nan)
+    di_sum = plus_di + minus_di
+    dx = 100 * (plus_di - minus_di).abs() / di_sum.replace(0, np.nan)
+    dx = dx.mask((di_sum == 0) | (atr == 0), 0.0)
+    data["adx"] = wilder_average(dx, int(indicator_params.get("adx_smoothing", adx_period)))
     data["adx_strong"] = data["adx"] >= adx_threshold
 
-    if pe_ratio not in (None, np.nan):
+    eps_available = eps_ttm is not None and np.isfinite(float(eps_ttm)) and float(eps_ttm) != 0
+    per_available = eps_available or (pe_ratio is not None and np.isfinite(float(pe_ratio)))
+    if eps_available:
+        data["per"] = data["Close"] / float(eps_ttm)
+        data["per_support"] = (data["per"] > 0) & (data["per"] < per_max)
+    elif per_available:
         data["per"] = float(pe_ratio)
-        data["per_support"] = (float(pe_ratio) > 0) & (float(pe_ratio) <= per_max)
+        data["per_support"] = (float(pe_ratio) > 0) & (float(pe_ratio) < per_max)
     else:
         data["per"] = np.nan
         data["per_support"] = False
@@ -570,22 +628,48 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
         (data["sma50"] > data["sma200"])
     )
 
+    # A pivot at t-5 becomes known only after five bars on its right.
+    pivot_low = (
+        (data["Low"].shift(5) <= data["Low"].shift(6).rolling(5).min()) &
+        (data["Low"].shift(5) < data["Low"].rolling(5).min())
+    )
+    pivot_high = (
+        (data["High"].shift(5) >= data["High"].shift(6).rolling(5).max()) &
+        (data["High"].shift(5) > data["High"].rolling(5).max())
+    )
+    previous_low = data["Low"].shift(5).where(pivot_low).ffill().shift(1)
+    previous_low_flow = data["flow_smooth"].shift(5).where(pivot_low).ffill().shift(1)
+    previous_high = data["High"].shift(5).where(pivot_high).ffill().shift(1)
+    previous_high_flow = data["flow_smooth"].shift(5).where(pivot_high).ffill().shift(1)
     data["bull_div"] = (
-        (data["Low"].shift(5) < data["Low"].shift(10)) &
-        (data["flow_smooth"].shift(5) > data["flow_smooth"].shift(10))
+        pivot_low &
+        (data["Low"].shift(5) < previous_low) &
+        (data["flow_smooth"].shift(5) > previous_low_flow)
     )
     data["bear_div"] = (
-        (data["High"].shift(5) > data["High"].shift(10)) &
-        (data["flow_smooth"].shift(5) < data["flow_smooth"].shift(10))
+        pivot_high &
+        (data["High"].shift(5) > previous_high) &
+        (data["flow_smooth"].shift(5) < previous_high_flow)
     )
 
+    positions = pd.Series(np.arange(len(data)), index=data.index)
+    div_window = int(indicator_params["divergence_window"])
+    data["bull_recent"] = (positions - positions.where(data["bull_div"]).ffill()) <= div_window
+    data["bear_recent"] = (positions - positions.where(data["bear_div"]).ffill()) <= div_window
+    buy_filter = (data["momentum_ok"] & data["rsi_up"] &
+                  (data["rsi"] < float(indicator_params["rsi_max_buy"])))
     data["buy_pro"] = (
         data["trend_up"] &
         data["cfi_up"] &
-        ((data["flow_smooth"] > 0) | data["accumulation"])
+        ((data["flow_smooth"] > 0) | data["accumulation"]) &
+        buy_filter
     )
-    data["buy_early"] = data["bull_div"] & (data["flow_smooth"] > 0)
-    data["sell"] = data["distribution"] | data["bear_div"] | (data["flow_smooth"] < 0)
+    data["buy_early"] = data["bull_recent"] & (data["flow_smooth"] > 0) & buy_filter
+    data["sell"] = data["distribution"] | data["bear_recent"] | (data["flow_smooth"] < 0)
+    data["institutional_entry"] = (
+        data["trend_up"] & data["cfi_up"] & data["cfi_w_up"] &
+        data["vol_strong"] & data["accumulation"]
+    )
 
     bool_cols = [
         "cfi_up", "cfi_w_up", "vol_strong", "accumulation",
@@ -606,10 +690,6 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     # El PER solo cuenta si hay dato real disponible para ese ticker.
     # Si no hay PE ratio, se excluye del denominador para no penalizar
     # injustamente a empresas sin ese dato (ETFs, algunos mercados, etc.)
-    per_available = pe_ratio not in (None, np.nan) and not (
-        isinstance(pe_ratio, float) and np.isnan(pe_ratio)
-    )
-
     total_weight = (
         weight_trend + weight_cfi_daily + weight_cfi_weekly +
         weight_accumulation + weight_flow +
@@ -640,7 +720,7 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None):
     data["score"] = np.clip((raw_score / total_weight) * 100.0, 0, 100)
 
     conditions = [
-        data["buy_pro"] | ((data["rsi_bullish"] & data["macd_bullish"]) & data["trend_up"]),
+        data["buy_pro"],
         data["buy_early"],
         data["sell"],
     ]
@@ -1008,6 +1088,11 @@ class AnalysisThread(QThread):
 
     def run(self):
         results = []
+        benchmark = None
+        if self.tickers and not self._stop_requested:
+            benchmark, _ = download_data_safe("^GSPC", period=PERIOD, interval=INTERVAL)
+            if benchmark is None:
+                self.progress.emit("Sin datos del S&P 500: Beta no disponible.")
         for ticker in self.tickers:
             if self._stop_requested:
                 self.progress.emit("Análisis cancelado.")
@@ -1028,10 +1113,11 @@ class AnalysisThread(QThread):
                 continue
 
             try:
-                pe_ratio = get_pe_ratio(ticker)
+                eps_ttm = get_trailing_eps(ticker)
                 stock_data = calculate_indicators(
                     stock_data,
-                    pe_ratio=pe_ratio,
+                    eps_ttm=eps_ttm,
+                    benchmark=benchmark,
                     params={
                         "rsi_period": RSI_PERIOD,
                         "rsi_overbought": RSI_OVERBOUGHT,
@@ -1064,10 +1150,17 @@ class AnalysisThread(QThread):
                         else "DISTRIBUYENDO" if last["distribution"]
                         else "NEUTRO"
                     ),
-                    "RSI": round(float(last["rsi"]), 1),
+                    "RSI": round(float(last["rsi"]), 1) if pd.notna(last["rsi"]) else "N/A",
+                    "RSI Vol.": round(float(last["rsi_volume"]), 2) if pd.notna(last["rsi_volume"]) else "N/A",
+                    "Momentum": round(float(last["momentum"]), 2) if pd.notna(last["momentum"]) else "N/A",
                     "MACD": round(float(last["macd"]), 2),
                     "PER": round(float(last["per"]), 2) if pd.notna(last["per"]) else "N/A",
                     "ADX": round(float(last["adx"]), 1),
+                    "VWMA": round(float(last["vwma"]), 2) if pd.notna(last["vwma"]) else "N/A",
+                    "Riesgo %": round(float(last["risk"]), 2) if pd.notna(last["risk"]) else "N/A",
+                    "Beta": round(float(last["beta"]), 2) if pd.notna(last["beta"]) else "N/A",
+                    "Dif. %": round(float(last["change_pct"]), 2) if pd.notna(last["change_pct"]) else "N/A",
+                    "Entrada Institucional": "SI" if last["institutional_entry"] else "NO",
                     "VWAP": "ENCIMA" if last["vwap_bullish"] else "DEBAJO",
                     "Vol Relativo": (
                         round(float(last["Volume"]) / float(last["vol_ma"]), 2)
@@ -2125,7 +2218,8 @@ class MainWindow(QMainWindow):
         self.E_Resultados.setSortingEnabled(False)
         row_idx = self.E_Resultados.rowCount()
         self.E_Resultados.insertRow(row_idx)
-        numeric_columns = {"Precio", "Score", "RSI", "MACD", "PER", "Vol Relativo"}
+        numeric_columns = {"Precio", "Score", "RSI", "RSI Vol.", "Momentum", "MACD",
+                           "PER", "ADX", "VWMA", "Riesgo %", "Beta", "Dif. %", "Vol Relativo"}
         for col_idx, header in enumerate(columns):
             value = result.get(header, "")
             display_value = str(value)

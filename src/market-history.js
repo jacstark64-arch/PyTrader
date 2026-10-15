@@ -45,10 +45,8 @@ function stooqSymbolCandidates(ticker) {
     ['.pa', '.fr'],
     ['.l', '.uk'],
     ['.de', '.de'],
-    ['.f', '.de'],
     ['.mi', '.it'],
     ['.as', '.nl'],
-    ['.he', '.il'],
     ['.st', '.se'],
     ['.sw', '.ch'],
     ['.ol', '.no'],
@@ -61,7 +59,7 @@ function stooqSymbolCandidates(ticker) {
   const suffix = [...suffixMap.keys()].find((item) => normalized.endsWith(item));
   if (suffix) {
     const base = normalized.slice(0, -suffix.length);
-    candidates.push(`${base}${suffixMap.get(suffix)}`, normalized, base);
+    candidates.push(`${base}${suffixMap.get(suffix)}`, normalized);
   } else if (!normalized.includes('.')) {
     candidates.push(`${normalized}.us`, normalized);
   } else {

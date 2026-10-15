@@ -15,6 +15,22 @@ const {
   stooqSymbolCandidates,
 } = require('../src/market-history');
 
+test('analysis response includes TTM PER and Pine-specific metrics', () => {
+  const { buildAnalysisResponse } = require('../api/analyze');
+  const rows = Array.from({ length: 90 }, (_, i) => ({
+    date: new Date(Date.UTC(2024, 0, 1 + i)),
+    open: 99 + i, high: 102 + i, low: 98 + i, close: 100 + i, volume: 1000 + i,
+  }));
+  const result = buildAnalysisResponse('TEST', rows, { epsTtm: 2 }).result;
+  assert.equal(result.per, 189 / 2);
+  assert.equal(result.momentum, 52);
+  assert.equal(result.beta, null);
+  assert.equal(typeof result.rsiVolume, 'number');
+  assert.equal(typeof result.risk, 'number');
+  assert.equal(typeof result.vwma, 'number');
+  assert.equal(typeof result.institutionalEntry, 'boolean');
+});
+
 const sampleResult = {
   date: '2026-03-01',
   close: 132.4,
@@ -98,7 +114,9 @@ test('Stooq helpers parse CSV and convert common Yahoo suffixes', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].close, 10.5);
   assert.deepEqual(stooqSymbolCandidates('AAPL'), ['aapl.us', 'aapl']);
-  assert.deepEqual(stooqSymbolCandidates('SAN.MC'), ['san.es', 'san.mc', 'san']);
+  assert.deepEqual(stooqSymbolCandidates('SAN.MC'), ['san.es', 'san.mc']);
+  assert.deepEqual(stooqSymbolCandidates('SAP.F'), ['sap.f']);
+  assert.deepEqual(stooqSymbolCandidates('NOKIA.HE'), ['nokia.he']);
 });
 
 test('market data unavailable recognizes Yahoo limit messages as fatal', () => {

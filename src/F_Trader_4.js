@@ -72,14 +72,6 @@ function padArray(arr, length) {
   return out;
 }
 
-function rollingMean(values, period) {
-  return values.map((_, i) => {
-    if (i < period - 1) return null;
-    const window = values.slice(i - period + 1, i + 1);
-    return window.every(Number.isFinite) ? window.reduce((sum, value) => sum + value, 0) / period : null;
-  });
-}
-
 function weeklyCfiUp(rows) {
   const sessionDate = value => new Date(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value) ? value + 'Z' : value);
   const weeks = new Map();
@@ -116,8 +108,11 @@ function calculateIndicators(ohlcv, options = {}) {
   const defaults = {
     rsiPeriod: 14, rsiOverbought: 70, rsiOversold: 30,
     macdFast: 12, macdSlow: 26, macdSignal: 9,
-    per: null, perMax: 25, adxPeriod: 14, adxThreshold: 20,
-    rsiWeight: 5, macdWeight: 5, perWeight: 5, adxWeight: 5, vwapWeight: 5
+    per: null, perMax: 20, adxPeriod: 14, adxThreshold: 25,
+    rsiWeight: 5, macdWeight: 5, perWeight: 5, adxWeight: 5, vwapWeight: 5,
+    momentumPeriod: 52, momentumMin: 1, momentumMax: 30, rsiMaxBuy: 65,
+    divergenceWindow: 10, volumeRsiPeriod: 14, vwmaPeriod: 30, betaPeriod: 61,
+    epsTtm: null, benchmark: []
   };
   const cfg = Object.assign({}, defaults, options);
   const n = ohlcv.length;
@@ -149,10 +144,42 @@ function calculateIndicators(ohlcv, options = {}) {
 
   // RSI
   const changes = close.map((v, i) => i ? v - close[i - 1] : null);
-  const gains = rollingMean(changes.map(v => v == null ? null : Math.max(v, 0)), cfg.rsiPeriod);
-  const losses = rollingMean(changes.map(v => v == null ? null : Math.max(-v, 0)), cfg.rsiPeriod);
-  const rsiP = gains.map((gain, i) => gain == null ? 50 : losses[i] === 0 ? (gain > 0 ? 100 : 50) : 100 - 100 / (1 + gain / losses[i]));
-  const rsiBullish = rsiP.map((v, i) => i>0 ? v > 50 && v > rsiP[i-1] : false);
+  const gains = wilderAverage(changes.map(v => v == null ? null : Math.max(v, 0)), cfg.rsiPeriod);
+  const losses = wilderAverage(changes.map(v => v == null ? null : Math.max(-v, 0)), cfg.rsiPeriod);
+  const rsiP = gains.map((gain, i) => gain == null ? null : losses[i] === 0 ? (gain > 0 ? 100 : 50) : 100 - 100 / (1 + gain / losses[i]));
+  const rsiBullish = rsiP.map((v, i) => i > 0 && v != null && rsiP[i - 1] != null && v > 50 && v > rsiP[i - 1]);
+  const rsiUp = rsiP.map((v, i) => i > 0 && gains[i - 1] != null && gains[i] != null && v > rsiP[i - 1]);
+  const momentum = close.map((v, i) => i >= cfg.momentumPeriod ? v - close[i - cfg.momentumPeriod] : null);
+  const momentumOk = momentum.map(v => v != null && v > cfg.momentumMin && v < cfg.momentumMax);
+  const volumeChanges = volume.map((v, i) => i ? v - volume[i - 1] : null);
+  const volumeGains = wilderAverage(volumeChanges.map(v => v == null ? null : Math.max(v, 0)), cfg.volumeRsiPeriod);
+  const volumeLosses = wilderAverage(volumeChanges.map(v => v == null ? null : Math.max(-v, 0)), cfg.volumeRsiPeriod);
+  const rsiVolume = volumeGains.map((gain, i) => gain == null ? null : volumeLosses[i] === 0 ? (gain > 0 ? 100 : 50) : 100 - 100 / (1 + gain / volumeLosses[i]));
+  const rsiVolumeUp = rsiVolume.map((v, i) => i > 0 && v != null && rsiVolume[i - 1] != null && v > rsiVolume[i - 1]);
+  const volumeAverage = padArray(ti.SMA.calculate({ period: cfg.vwmaPeriod, values: volume }), n);
+  const weightedAverage = padArray(ti.SMA.calculate({ period: cfg.vwmaPeriod, values: close.map((v, i) => v * volume[i]) }), n);
+  const vwma = weightedAverage.map((v, i) => v != null && volumeAverage[i] > 0 ? v / volumeAverage[i] : null);
+  const risk = close.map((v, i) => vwma[i] != null && v !== 0 ? Math.abs(v - vwma[i]) / v * 100 : null);
+  const changePct = close.map((v, i) => i > 0 && close[i - 1] !== 0 ? (v / close[i - 1] - 1) * 100 : null);
+  const benchmark = [...cfg.benchmark].sort((a, b) => new Date(a.date) - new Date(b.date));
+  let benchmarkIndex = -1;
+  const benchmarkReturns = ohlcv.map(row => {
+    while (benchmarkIndex + 1 < benchmark.length && new Date(benchmark[benchmarkIndex + 1].date) <= new Date(row.date)) benchmarkIndex++;
+    return benchmarkIndex > 0 && benchmark[benchmarkIndex - 1].close !== 0
+      ? (benchmark[benchmarkIndex].close / benchmark[benchmarkIndex - 1].close - 1) * 100 : null;
+  });
+  const beta = ohlcv.map((row, i) => {
+    if (i < cfg.betaPeriod) return null;
+    const instrument = changePct.slice(i - cfg.betaPeriod + 1, i + 1);
+    const index = benchmarkReturns.slice(i - cfg.betaPeriod + 1, i + 1);
+    if (!instrument.every(Number.isFinite) || !index.every(Number.isFinite)) return null;
+    const instrumentMean = instrument.reduce((a, b) => a + b, 0) / cfg.betaPeriod;
+    const indexMean = index.reduce((a, b) => a + b, 0) / cfg.betaPeriod;
+    const covariance = instrument.reduce((sum, v, j) => sum + (v - instrumentMean) * (index[j] - indexMean), 0);
+    const variance = index.reduce((sum, v) => sum + (v - indexMean) ** 2, 0);
+    const instrumentVariance = instrument.reduce((sum, v) => sum + (v - instrumentMean) ** 2, 0);
+    return variance > 0 && instrumentVariance > 0 ? covariance / variance : null;
+  });
 
   // MACD
   const fast = ewma(close, cfg.macdFast);
@@ -185,7 +212,7 @@ function calculateIndicators(ohlcv, options = {}) {
   const plus = wilderAverage(plusDm, cfg.adxPeriod);
   const minus = wilderAverage(minusDm, cfg.adxPeriod);
   const dx = atr.map((value, i) => value == null ? null : (value === 0 || plus[i] + minus[i] === 0) ? 0 : 100 * Math.abs(plus[i] - minus[i]) / (plus[i] + minus[i]));
-  const adx = wilderAverage(dx, cfg.adxPeriod);
+  const adx = wilderAverage(dx, cfg.adxSmoothing ?? cfg.adxPeriod);
   const adxStrong = adx.map(v => v != null ? v >= cfg.adxThreshold : false);
 
   // Moving averages for trend
@@ -194,25 +221,46 @@ function calculateIndicators(ohlcv, options = {}) {
   const sma200 = padArray(ti.SMA.calculate({ period: 200, values: close }), n);
   const trendUp = close.map((c,i) => (c != null && ema21[i]!=null && sma50[i]!=null && sma200[i]!=null) ? (c > ema21[i] && ema21[i] > sma50[i] && sma50[i] > sma200[i]) : false);
 
-  // Divergences (simple heuristic)
-  const bullDiv = ohlcv.map((r,i) => i>=10 ? (low[i-5] < low[i-10] && (flowSmooth[i-5] || 0) > (flowSmooth[i-10] || 0)) : false);
-  const bearDiv = ohlcv.map((r,i) => i>=10 ? (high[i-5] > high[i-10] && (flowSmooth[i-5] || 0) < (flowSmooth[i-10] || 0)) : false);
+  // Match the table's pivots, confirmed after five bars on the right.
+  const pivotLow = low.map((v, i) => i >= 10 && low[i - 5] <= Math.min(...low.slice(i - 10, i - 5)) && low[i - 5] < Math.min(...low.slice(i - 4, i + 1)));
+  const pivotHigh = high.map((v, i) => i >= 10 && high[i - 5] >= Math.max(...high.slice(i - 10, i - 5)) && high[i - 5] > Math.max(...high.slice(i - 4, i + 1)));
+  const bullDiv = Array(n).fill(false), bearDiv = Array(n).fill(false);
+  let previousLow = null, previousHigh = null;
+  for (let i = 10; i < n; i++) {
+    const candidate = i - 5;
+    if (pivotLow[i]) {
+      bullDiv[i] = previousLow !== null && low[candidate] < low[previousLow] && flowSmooth[candidate] > flowSmooth[previousLow];
+      previousLow = candidate;
+    }
+    if (pivotHigh[i]) {
+      bearDiv[i] = previousHigh !== null && high[candidate] > high[previousHigh] && flowSmooth[candidate] < flowSmooth[previousHigh];
+      previousHigh = candidate;
+    }
+  }
 
   const accumulation = ohlcv.map((r,i) => volStrong[i] && closePos[i] > 0.6 && r.close >= r.open);
   const distribution = ohlcv.map((r,i) => volStrong[i] && closePos[i] < 0.4 && r.close <= r.open);
 
-  const buyPro = ohlcv.map((r,i) => trendUp[i] && cfiUp[i] && ((flowSmooth[i]||0) > 0 || accumulation[i]));
-  const buyEarly = bullDiv.map((v,i) => v && (flowSmooth[i]||0) > 0);
-  const sell = ohlcv.map((r,i) => distribution[i] || bearDiv[i] || ((flowSmooth[i]||0) < 0));
+  let lastBull = -Infinity, lastBear = -Infinity;
+  const bullRecent = bullDiv.map((v, i) => { if (v) lastBull = i; return i - lastBull <= cfg.divergenceWindow; });
+  const bearRecent = bearDiv.map((v, i) => { if (v) lastBear = i; return i - lastBear <= cfg.divergenceWindow; });
+  const buyFilter = ohlcv.map((r, i) => momentumOk[i] && rsiUp[i] && rsiP[i] < cfg.rsiMaxBuy);
+  const buyPro = ohlcv.map((r,i) => trendUp[i] && cfiUp[i] && ((flowSmooth[i]||0) > 0 || accumulation[i]) && buyFilter[i]);
+  const buyEarly = bullRecent.map((v,i) => v && (flowSmooth[i]||0) > 0 && buyFilter[i]);
+  const sell = ohlcv.map((r,i) => distribution[i] || bearRecent[i] || ((flowSmooth[i]||0) < 0));
+  const institutionalEntry = ohlcv.map((r, i) => trendUp[i] && cfiUp[i] && cfiWeeklyUp[i] && volStrong[i] && accumulation[i]);
 
   // PER support
-  const per = cfg.per != null && Number.isFinite(Number(cfg.per)) ? Number(cfg.per) : null;
-  const perSupportBool = per != null ? (per > 0 && per <= cfg.perMax) : false;
+  const epsAvailable = cfg.epsTtm != null && Number.isFinite(Number(cfg.epsTtm)) && Number(cfg.epsTtm) !== 0;
+  const fallbackPer = cfg.per != null && Number.isFinite(Number(cfg.per)) ? Number(cfg.per) : null;
+  const perAvailable = epsAvailable || fallbackPer != null;
 
   // Score
   const results = [];
-  const totalWeight = 100 + cfg.rsiWeight + cfg.macdWeight + cfg.adxWeight + cfg.vwapWeight + (per != null ? cfg.perWeight : 0);
+  const totalWeight = 100 + cfg.rsiWeight + cfg.macdWeight + cfg.adxWeight + cfg.vwapWeight + (perAvailable ? cfg.perWeight : 0);
   for (let i=0;i<n;i++) {
+    const per = epsAvailable ? close[i] / Number(cfg.epsTtm) : fallbackPer;
+    const perSupportBool = per != null && per > 0 && per < cfg.perMax;
     const score = Math.max(0, Math.min(100, 100 / totalWeight * (
       (trendUp[i] ? 25 : 0) +
       (cfiUp[i] ? 25 : 0) +
@@ -227,7 +275,7 @@ function calculateIndicators(ohlcv, options = {}) {
       )
     ));
 
-    const signal = buyPro[i] || ((rsiBullish[i] && macdBullish[i]) && trendUp[i]) ? 'COMPRA FUERTE' : (buyEarly[i] ? 'COMPRA TEMPRANA' : (sell[i] ? 'VENTA' : 'ESPERA'));
+    const signal = buyPro[i] ? 'COMPRA FUERTE' : (buyEarly[i] ? 'COMPRA TEMPRANA' : (sell[i] ? 'VENTA' : 'ESPERA'));
 
     results.push(Object.assign({}, ohlcv[i], {
       cfi: cfi[i],
@@ -241,6 +289,15 @@ function calculateIndicators(ohlcv, options = {}) {
       flowSmooth: flowSmooth[i],
       rsi: rsiP[i],
       rsiBullish: rsiBullish[i],
+      rsiUp: rsiUp[i],
+      rsiVolume: rsiVolume[i],
+      rsiVolumeUp: rsiVolumeUp[i],
+      momentum: momentum[i],
+      momentumOk: momentumOk[i],
+      vwma: vwma[i],
+      risk: risk[i],
+      changePct: changePct[i],
+      beta: beta[i],
       macd: macd[i],
       macdSignal: macdSignal[i],
       macdBullish: macdBullish[i],
@@ -254,11 +311,14 @@ function calculateIndicators(ohlcv, options = {}) {
       trendUp: trendUp[i],
       bullDiv: bullDiv[i],
       bearDiv: bearDiv[i],
+      bullRecent: bullRecent[i],
+      bearRecent: bearRecent[i],
       accumulation: accumulation[i],
       distribution: distribution[i],
       buyPro: buyPro[i],
       buyEarly: buyEarly[i],
       sell: sell[i],
+      institutionalEntry: institutionalEntry[i],
       per: per,
       perSupport: perSupportBool,
       score,

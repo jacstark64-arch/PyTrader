@@ -6,6 +6,7 @@ const {
   isMarketDataUnavailableError,
 } = require('../src/market-history');
 const { normalizeTicker } = require('../src/F_Trader_4');
+const { fetchTrailingEps } = require('../src/fundamentals');
 
 function loadDependencies() {
   const yf = require('yahoo-finance2').default;
@@ -74,6 +75,13 @@ function serializeAnalysisResult(ticker, result) {
       cfi: result.cfi,
       flow: result.flowSmooth,
       rsi: result.rsi,
+      rsiVolume: result.rsiVolume,
+      momentum: result.momentum,
+      vwma: result.vwma,
+      risk: result.risk,
+      beta: result.beta,
+      changePct: result.changePct,
+      institutionalEntry: result.institutionalEntry,
       macd: result.macd,
       macdSignal: result.macdSignal,
       per: result.per,
@@ -104,8 +112,10 @@ function buildAnalysisResponse(ticker, ohlcv, options = {}) {
     macdFast: Number(options.macdFast || 12),
     macdSlow: Number(options.macdSlow || 26),
     macdSignal: Number(options.macdSignal || 9),
-    perMax: Number(options.perMax || 25),
+    perMax: Number(options.perMax ?? 20),
     adxPeriod: Number(options.adxPeriod || 14),
+    epsTtm: options.epsTtm ?? null,
+    benchmark: options.benchmark || [],
   }).at(-1);
 
   return serializeAnalysisResult(ticker, result);
@@ -115,6 +125,12 @@ async function analyzeTickers(input) {
   const request = normalizeAnalyzeRequest(input);
   const { yf } = loadDependencies();
   const results = [];
+  let benchmark = [];
+  try {
+    benchmark = await fetchMarketHistory(yf, '^GSPC', request.period, request.interval) || [];
+  } catch {
+    // Beta stays unavailable when the benchmark cannot be obtained.
+  }
 
   for (const ticker of request.tickers) {
     try {
@@ -131,7 +147,8 @@ async function analyzeTickers(input) {
         volume: row.volume,
       })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
-      results.push(buildAnalysisResponse(ticker, rows, request));
+      const epsTtm = await fetchTrailingEps(yf, yahooTicker);
+      results.push(buildAnalysisResponse(ticker, rows, { ...request, epsTtm, benchmark }));
     } catch (error) {
       if (isMarketDataUnavailableError(error)) {
         throw new Error(YAHOO_UNAVAILABLE_MESSAGE);

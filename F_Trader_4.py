@@ -45,12 +45,14 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QTextEdit,
     QFormLayout,
     QVBoxLayout,
+    QHBoxLayout,
     QComboBox,
     QSpinBox,
     QDoubleSpinBox,
     QCheckBox,
     QLineEdit,
     QTimeEdit,
+    QWidget,
 )
 
 import numpy as np
@@ -93,6 +95,7 @@ VWAP_WEIGHT = 5
 EXPORT_EXCEL = False
 EXCEL_NAME = "SmartMoney_Screener.xlsx"
 APP_DIR = Path(__file__).resolve().parent
+RESULTS_DIR = APP_DIR / "resultados"
 
 # Conserva la notacion original MERCADO:TICKER para poder reconstruir
 # las listas de salida exactamente en el formato de TradingView.
@@ -178,6 +181,7 @@ DEFAULT_APP_OPTIONS = {
     "delay_between_requests": DELAY_BETWEEN_REQUESTS,
     "export_excel": EXPORT_EXCEL,
     "excel_name": EXCEL_NAME,
+    "results_directory": str(RESULTS_DIR),
     "min_score_to_display": MIN_SCORE_TO_DISPLAY,
     "email_min_score": EMAIL_MIN_SCORE,
     "email_results_to": EMAIL_RESULTS_TO,
@@ -843,6 +847,14 @@ class OptionsDialog(QDialog):
 
         self.export_excel = QCheckBox()
         self.excel_name = QLineEdit()
+        self.results_directory = QLineEdit()
+        self.results_directory_button = QPushButton("Examinar…")
+        results_directory_row = QHBoxLayout()
+        results_directory_row.addWidget(self.results_directory)
+        results_directory_row.addWidget(self.results_directory_button)
+        results_directory_widget = QWidget()
+        results_directory_widget.setLayout(results_directory_row)
+        self.results_directory_button.clicked.connect(self.choose_results_directory)
 
         self.min_score_table = QSpinBox()
         self.min_score_table.setRange(0, 100)
@@ -897,6 +909,7 @@ class OptionsDialog(QDialog):
         form.addRow("Espera entre tickers", self.delay)
         form.addRow("Exportar Excel", self.export_excel)
         form.addRow("Nombre Excel", self.excel_name)
+        form.addRow("Carpeta de resultados", results_directory_widget)
         form.addRow("Score minimo en tabla", self.min_score_table)
         form.addRow("Score minimo para email", self.min_score_email)
         form.addRow("RSI periodo", self.rsi_period)
@@ -941,6 +954,7 @@ class OptionsDialog(QDialog):
         self.delay.valueChanged.connect(self._emit_options_changed)
         self.export_excel.toggled.connect(self._emit_options_changed)
         self.excel_name.textChanged.connect(self._emit_options_changed)
+        self.results_directory.textChanged.connect(self._emit_options_changed)
         self.min_score_table.valueChanged.connect(self._emit_options_changed)
         self.min_score_email.valueChanged.connect(self._emit_options_changed)
         self.rsi_period.valueChanged.connect(self._emit_options_changed)
@@ -974,6 +988,7 @@ class OptionsDialog(QDialog):
         self.delay.setValue(float(options["delay_between_requests"]))
         self.export_excel.setChecked(bool(options["export_excel"]))
         self.excel_name.setText(str(options["excel_name"]))
+        self.results_directory.setText(str(options["results_directory"]))
         self.min_score_table.setValue(int(options["min_score_to_display"]))
         self.min_score_email.setValue(int(options["email_min_score"]))
         self.rsi_period.setValue(int(options["indicator_rsi_period"]))
@@ -1001,6 +1016,7 @@ class OptionsDialog(QDialog):
             "delay_between_requests": self.delay.value(),
             "export_excel": self.export_excel.isChecked(),
             "excel_name": self.excel_name.text().strip() or DEFAULT_APP_OPTIONS["excel_name"],
+            "results_directory": self.results_directory.text().strip() or str(RESULTS_DIR),
             "min_score_to_display": self.min_score_table.value(),
             "email_min_score": self.min_score_email.value(),
             "indicator_rsi_period": self.rsi_period.value(),
@@ -1025,6 +1041,13 @@ class OptionsDialog(QDialog):
             "loop_active_start": python_time_from_qt(self.loop_start.time()),
             "loop_active_end": python_time_from_qt(self.loop_end.time()),
         }
+
+    def choose_results_directory(self):
+        selected = QFileDialog.getExistingDirectory(
+            self, "Seleccionar carpeta de resultados", self.results_directory.text()
+        )
+        if selected:
+            self.results_directory.setText(selected)
 
 
 class ChartDialog(QDialog):
@@ -1210,7 +1233,7 @@ def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
             seen.add(tv_symbol)
             symbols.append(tv_symbol)
 
-    output_path = Path(filename)
+    output_path = output_file_path(filename)
     with open(output_path, "w", encoding="utf-8", newline="") as file:
         file.write(",".join(symbols))
         if symbols:
@@ -1223,9 +1246,17 @@ def export_unanalyzed_tickers(tickers, filename=FAILED_TICKERS_FILE):
     values = list(dict.fromkeys(
         str(ticker).strip() for ticker in tickers if str(ticker).strip()
     ))
-    output_path = Path(filename)
+    output_path = output_file_path(filename)
     output_path.write_text("\n".join(values) + ("\n" if values else ""), encoding="utf-8")
     return output_path, len(values)
+
+
+def output_file_path(filename):
+    """Resolve result filenames inside the configured results directory."""
+    path = Path(filename)
+    path = Path(RESULTS_DIR) / path.name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class MainWindow(QMainWindow):
@@ -1298,6 +1329,8 @@ class MainWindow(QMainWindow):
         self.B_Borrar.setText("Borrar")
         self.B_Borrar.clicked.connect(self.on_b_clear_results)
         self.B_Salir.clicked.connect(self.close)
+        self._set_e_tiempo_text("15")
+        self.C_Tiempo.setChecked(True)
         self.C_Tiempo.toggled.connect(self.on_c_tiempo_toggled)
         self.E_Tiempo.textChanged.connect(self.on_e_tiempo_edited)
 
@@ -1321,6 +1354,7 @@ class MainWindow(QMainWindow):
             ("Esperar", "esperar"),
         )):
             button = QPushButton(label, self.G_Resultados)
+            button.setObjectName("SignalFilterButton")
             button.setCheckable(True)
             button.setGeometry(925 + index * 88, 31, 82, 29)
             button.setChecked(index == 0)
@@ -1429,6 +1463,12 @@ class MainWindow(QMainWindow):
 
             QPushButton:pressed {
                 background-color: #11506c;
+            }
+
+            QPushButton#SignalFilterButton:checked {
+                background-color: #16a34a;
+                border-color: #15803d;
+                color: #ffffff;
             }
 
             QPushButton:disabled {
@@ -1577,6 +1617,9 @@ class MainWindow(QMainWindow):
             options["export_excel"],
         )
         options["excel_name"] = self.settings.value("excel_name", options["excel_name"])
+        options["results_directory"] = self.settings.value(
+            "results_directory", options["results_directory"]
+        )
         options["min_score_to_display"] = int(
             self.settings.value(
                 "min_score_to_display",
@@ -1651,6 +1694,8 @@ class MainWindow(QMainWindow):
         self.settings.sync()
 
     def apply_app_options(self, options, save=True):
+        global RESULTS_DIR
+        RESULTS_DIR = Path(options["results_directory"]).expanduser()
         config_values = {
             "PERIOD": str(options["period"]),
             "INTERVAL": str(options["interval"]),
@@ -2368,7 +2413,7 @@ class MainWindow(QMainWindow):
         if not results and not self.cumulative_results:
             self.append_to_visor("No se generaron resultados.")
             if EXPORT_EXCEL:
-                empty_export_path = Path(EXCEL_NAME).with_suffix(".txt")
+                empty_export_path = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
                 try:
                     empty_export_path.write_text("", encoding="utf-8")
                     self.append_to_visor(
@@ -2401,7 +2446,7 @@ class MainWindow(QMainWindow):
                 return
             try:
                 # Construir archivo .txt en formato compatible con TradingView
-                tv_file = Path(EXCEL_NAME).with_suffix(".txt")
+                tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
 
                 # Mapa inverso: sufijo -> mercado (códigos usados para TradingView)
                 suffix_to_exchange = {
@@ -2541,12 +2586,7 @@ class MainWindow(QMainWindow):
             return
 
         if not self.loop_source_type or not self.loop_source_path:
-            QMessageBox.warning(
-                self,
-                "Sin lista o carpeta",
-                "Selecciona una lista o carpeta antes de activar el loop.",
-            )
-            self.C_Tiempo.setChecked(False)
+            self.append_to_visor("Loop listo (15 min): selecciona una lista o carpeta.")
             return
 
         self._loop_market_close_handled = False

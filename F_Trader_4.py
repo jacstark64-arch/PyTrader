@@ -51,7 +51,6 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDoubleSpinBox,
     QCheckBox,
     QLineEdit,
-    QLabel,
     QTimeEdit,
     QWidget,
 )
@@ -1275,7 +1274,6 @@ class MainWindow(QMainWindow):
         self._open_chart_dialogs = []
 
         uic.loadUi(UI_FILE, self)
-        self.setup_program_heading()
         self.apply_visual_style()
         self.settings = QSettings("PyTrader", "PyTrader")
         self.app_options = self.load_app_options()
@@ -1391,20 +1389,6 @@ class MainWindow(QMainWindow):
         self.update_lcd_reloj()
         self.update_market_progress_bars()
 
-    def setup_program_heading(self):
-        heading_height = 44
-        for widget in self.centralwidget.findChildren(
-            QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly
-        ):
-            widget.move(widget.x(), widget.y() + heading_height)
-
-        self.program_heading = QLabel("Mi Screener", self.centralwidget)
-        self.program_heading.setObjectName("ProgramHeading")
-        self.program_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.program_heading.setGeometry(0, 0, self.centralwidget.width(), heading_height)
-        self.centralwidget.installEventFilter(self)
-        self.resize(self.width(), self.height() + heading_height)
-
     def apply_visual_style(self):
         self.setStyleSheet(
             """
@@ -1413,12 +1397,6 @@ class MainWindow(QMainWindow):
                 color: #17212b;
                 font-family: "Segoe UI", Arial, sans-serif;
                 font-size: 10pt;
-            }
-
-            QLabel#ProgramHeading {
-                color: #0f5f87;
-                font-size: 20pt;
-                font-weight: 700;
             }
 
             QMenuBar {
@@ -2083,8 +2061,6 @@ class MainWindow(QMainWindow):
         return []
 
     def eventFilter(self, source, event):
-        if source is self.centralwidget and event.type() == QEvent.Type.Resize:
-            self.program_heading.setFixedWidth(source.width())
         if source is self.E_Ticker and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 self.on_b_analizar()

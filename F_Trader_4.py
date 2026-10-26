@@ -15,6 +15,8 @@ from PyQt6.QtCore import (  # pylint: disable=no-name-in-module
     Qt,
     QEvent,
     QUrl,
+    QPoint,
+    QPointF,
     QThread,
     QTimer,
     QTime,
@@ -29,6 +31,9 @@ from PyQt6.QtGui import (  # pylint: disable=no-name-in-module
     QDesktopServices,
     QIcon,
     QTextCursor,
+    QPainter,
+    QPen,
+    QPolygonF,
 )
 from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QApplication,
@@ -53,7 +58,9 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QLineEdit,
     QTimeEdit,
     QWidget,
-    QToolTip,
+    QLabel,
+    QFrame,
+    QVBoxLayout,
 )
 
 import numpy as np
@@ -1220,9 +1227,45 @@ class CompanyInfoThread(QThread):
                 "market": info.get("fullExchangeName") or info.get("exchange") or "No disponible",
                 "sector": info.get("sector") or "No disponible",
             }
+            try:
+                history = yf.Ticker(normalize_ticker(self.ticker)).history(period="3mo")
+                details["history"] = history["Close"].dropna().tolist()
+            except Exception:
+                details["history"] = []
         except Exception:
-            details = {"name": "No disponible", "market": "No disponible", "sector": "No disponible"}
+            details = {
+                "name": "No disponible", "market": "No disponible",
+                "sector": "No disponible", "history": [],
+            }
         self.info_ready.emit(self.ticker, details)
+
+
+class MiniPriceChart(QWidget):
+    """Gráfico compacto de cierre de los últimos tres meses."""
+
+    def __init__(self, values, parent=None):
+        super().__init__(parent)
+        self.values = values
+        self.setFixedSize(300, 100)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#64748b"), 1))
+        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
+        if len(self.values) < 2:
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Gráfico no disponible")
+            return
+        low, high = min(self.values), max(self.values)
+        span = high - low or 1
+        points = QPolygonF()
+        pad_x, pad_y = 8, 8
+        for idx, value in enumerate(self.values):
+            x = pad_x + idx * (self.width() - 2 * pad_x) / (len(self.values) - 1)
+            y = self.height() - pad_y - (value - low) * (self.height() - 2 * pad_y) / span
+            points.append(QPointF(x, y))
+        painter.setPen(QPen(QColor("#22c55e" if self.values[-1] >= self.values[0] else "#ef4444"), 2))
+        painter.drawPolyline(points)
 
 
 def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
@@ -1368,6 +1411,7 @@ class MainWindow(QMainWindow):
         self._ticker_hover = None
         self._company_info_cache = {}
         self._company_info_threads = []
+        self._company_info_popup = None
         self._company_info_timer = QTimer(self)
         self._company_info_timer.setSingleShot(True)
         self._company_info_timer.setInterval(2000)
@@ -2107,14 +2151,14 @@ class MainWindow(QMainWindow):
                 key = (index.row(), index.column(), ticker) if ticker else None
                 if key != self._ticker_hover:
                     self._company_info_timer.stop()
-                    QToolTip.hideText()
+                    self._hide_company_info_popup()
                     self._ticker_hover = key
                     if key:
                         self._company_info_timer.start()
             elif event.type() in (QEvent.Type.Leave, QEvent.Type.MouseButtonPress):
                 self._company_info_timer.stop()
                 self._ticker_hover = None
-                QToolTip.hideText()
+                self._hide_company_info_popup()
         if source is self.E_Ticker and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 self.on_b_analizar()
@@ -2151,11 +2195,34 @@ class MainWindow(QMainWindow):
             return
         index = self.E_Resultados.model().index(hover[0], hover[1])
         rect = self.E_Resultados.visualRect(index)
-        pos = self.E_Resultados.viewport().mapToGlobal(rect.bottomLeft())
-        text = (
-            f"{details['name']}\nMercado: {details['market']}\nSector: {details['sector']}"
+        if self._company_info_popup is not None:
+            self._company_info_popup.close()
+        popup = QFrame(None, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        popup.setObjectName("CompanyInfoPopup")
+        popup.setStyleSheet(
+            "QFrame#CompanyInfoPopup { background: #172033; color: #f8fafc; "
+            "border: 1px solid #64748b; border-radius: 6px; }"
+            "QLabel { color: #f8fafc; }"
         )
-        QToolTip.showText(pos, text, self.E_Resultados, rect)
+        layout = QVBoxLayout(popup)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(4)
+        name = QLabel(details["name"])
+        name.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(name)
+        layout.addWidget(QLabel(f"Mercado: {details['market']}"))
+        layout.addWidget(QLabel(f"Sector: {details['sector']}"))
+        layout.addWidget(MiniPriceChart(details.get("history", []), popup))
+        popup.adjustSize()
+        popup.move(self.E_Resultados.viewport().mapToGlobal(rect.bottomLeft()) + QPoint(0, 4))
+        popup.show()
+        self._company_info_popup = popup
+
+    def _hide_company_info_popup(self):
+        if self._company_info_popup is not None:
+            self._company_info_popup.close()
+            self._company_info_popup.deleteLater()
+            self._company_info_popup = None
 
     def append_to_visor(self, message):
         current = self.E_Visor_model.stringList()

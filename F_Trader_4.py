@@ -1,6 +1,6 @@
 #***********************************************************
 #
-#              15/10/2026
+#              26/10/2026
 #            Mi Screener V6
 #
 #***********************************************************
@@ -53,6 +53,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QLineEdit,
     QTimeEdit,
     QWidget,
+    QToolTip,
 )
 
 import numpy as np
@@ -1204,6 +1205,26 @@ class AnalysisThread(QThread):
         self.finished.emit(results)
 
 
+class CompanyInfoThread(QThread):
+    info_ready = pyqtSignal(str, object)
+
+    def __init__(self, ticker):
+        super().__init__()
+        self.ticker = ticker
+
+    def run(self):
+        try:
+            info = yf.Ticker(normalize_ticker(self.ticker)).info or {}
+            details = {
+                "name": info.get("longName") or info.get("shortName") or "No disponible",
+                "market": info.get("fullExchangeName") or info.get("exchange") or "No disponible",
+                "sector": info.get("sector") or "No disponible",
+            }
+        except Exception:
+            details = {"name": "No disponible", "market": "No disponible", "sector": "No disponible"}
+        self.info_ready.emit(self.ticker, details)
+
+
 def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
     """
     Crea A_Punto.txt con los valores cuyo Score sea estrictamente superior
@@ -1342,6 +1363,15 @@ class MainWindow(QMainWindow):
         self.E_Resultados.setShowGrid(False)
         self.E_Resultados.verticalHeader().setVisible(False)
         self.E_Resultados.verticalHeader().setDefaultSectionSize(30)
+        self.E_Resultados.viewport().setMouseTracking(True)
+        self.E_Resultados.viewport().installEventFilter(self)
+        self._ticker_hover = None
+        self._company_info_cache = {}
+        self._company_info_threads = []
+        self._company_info_timer = QTimer(self)
+        self._company_info_timer.setSingleShot(True)
+        self._company_info_timer.setInterval(2000)
+        self._company_info_timer.timeout.connect(self._show_hover_company_info)
         # Botones en una fila independiente para que el menú del filtro no
         # aparezca encima de la tabla de resultados.
         self.signal_filter_group = QButtonGroup(self.G_Resultados)
@@ -2061,11 +2091,71 @@ class MainWindow(QMainWindow):
         return []
 
     def eventFilter(self, source, event):
+        if source is self.E_Resultados.viewport():
+            if event.type() == QEvent.Type.MouseMove:
+                index = self.E_Resultados.indexAt(event.pos())
+                header = (
+                    self.E_Resultados.horizontalHeaderItem(index.column())
+                    if index.isValid() else None
+                )
+                item = self.E_Resultados.item(index.row(), index.column()) if index.isValid() else None
+                ticker = (
+                    item.text().strip()
+                    if header and header.text().strip().lower() == "ticker" and item
+                    else None
+                )
+                key = (index.row(), index.column(), ticker) if ticker else None
+                if key != self._ticker_hover:
+                    self._company_info_timer.stop()
+                    QToolTip.hideText()
+                    self._ticker_hover = key
+                    if key:
+                        self._company_info_timer.start()
+            elif event.type() in (QEvent.Type.Leave, QEvent.Type.MouseButtonPress):
+                self._company_info_timer.stop()
+                self._ticker_hover = None
+                QToolTip.hideText()
         if source is self.E_Ticker and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 self.on_b_analizar()
                 return True
         return super().eventFilter(source, event)
+
+    def _show_hover_company_info(self):
+        hover = self._ticker_hover
+        if not hover:
+            return
+        ticker = hover[2]
+        if ticker in self._company_info_cache:
+            self._display_company_info(ticker, self._company_info_cache[ticker])
+            return
+        if any(thread.ticker == ticker and thread.isRunning() for thread in self._company_info_threads):
+            return
+        thread = CompanyInfoThread(ticker)
+        thread.info_ready.connect(self._on_company_info_ready)
+        thread.finished.connect(
+            lambda worker=thread: self._company_info_threads.remove(worker)
+            if worker in self._company_info_threads else None
+        )
+        self._company_info_threads.append(thread)
+        thread.start()
+
+    def _on_company_info_ready(self, ticker, details):
+        self._company_info_cache[ticker] = details
+        if self._ticker_hover and self._ticker_hover[2] == ticker:
+            self._display_company_info(ticker, details)
+
+    def _display_company_info(self, ticker, details):
+        hover = self._ticker_hover
+        if not hover or hover[2] != ticker:
+            return
+        index = self.E_Resultados.model().index(hover[0], hover[1])
+        rect = self.E_Resultados.visualRect(index)
+        pos = self.E_Resultados.viewport().mapToGlobal(rect.bottomLeft())
+        text = (
+            f"{details['name']}\nMercado: {details['market']}\nSector: {details['sector']}"
+        )
+        QToolTip.showText(pos, text, self.E_Resultados, rect)
 
     def append_to_visor(self, message):
         current = self.E_Visor_model.stringList()

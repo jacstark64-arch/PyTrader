@@ -1,7 +1,7 @@
 #***********************************************************
 #
 #              26/10/2026
-#            Mi Screener V6.3
+#            Mi Screener V6.4
 #
 #***********************************************************
 import sys
@@ -1251,6 +1251,8 @@ class CompanyInfoThread(QThread):
 class MiniPriceChart(QWidget):
     """Gráfico compacto de velas, medias móviles y volumen."""
 
+    double_clicked = pyqtSignal(str)
+
     def __init__(self, values, ticker="", parent=None):
         super().__init__(parent)
         self.values = values
@@ -1321,6 +1323,10 @@ class MiniPriceChart(QWidget):
         painter.setPen(QColor("#64748b"))
         painter.drawText(5, int(top + 10), "DAILY")
         painter.drawText(left, h - 3, "1 año · Volumen")
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit(self.ticker)
+        super().mouseDoubleClickEvent(event)
 
 
 def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
@@ -2324,6 +2330,7 @@ class MainWindow(QMainWindow):
             layout.setContentsMargins(5, 4, 5, 4)
             details = self._company_info_cache.get(ticker)
             chart = MiniPriceChart(details.get("history", []) if details else [], ticker, card)
+            chart.double_clicked.connect(self.open_ticker_chart)
             layout.addWidget(chart)
             if details:
                 chart.setToolTip(
@@ -2580,6 +2587,12 @@ class MainWindow(QMainWindow):
         if not ticker:
             return
 
+        self.open_ticker_chart(ticker)
+
+    def open_ticker_chart(self, ticker):
+        ticker = str(ticker).strip()
+        if not ticker:
+            return
         tv_symbol = build_tradingview_symbol(ticker)
 
         if not HAS_WEBENGINE:

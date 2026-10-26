@@ -1229,8 +1229,15 @@ class CompanyInfoThread(QThread):
                 "sector": info.get("sector") or "No disponible",
             }
             try:
-                history = yf.Ticker(normalize_ticker(self.ticker)).history(period="3mo")
-                details["history"] = history["Close"].dropna().tolist()
+                history = yf.Ticker(normalize_ticker(self.ticker)).history(period="1y", interval="1d")
+                details["history"] = [
+                    {
+                        key: (float(row[key]) if key != "Volume" and not pd.isna(row[key])
+                              else (float(row[key]) if key == "Volume" and not pd.isna(row[key]) else 0.0))
+                        for key in ("Open", "High", "Low", "Close", "Volume")
+                    }
+                    for _, row in history.dropna(subset=["Open", "High", "Low", "Close"]).iterrows()
+                ]
             except Exception:
                 details["history"] = []
         except Exception:
@@ -1242,31 +1249,78 @@ class CompanyInfoThread(QThread):
 
 
 class MiniPriceChart(QWidget):
-    """Gráfico compacto de cierre de los últimos tres meses."""
+    """Gráfico compacto de velas, medias móviles y volumen."""
 
-    def __init__(self, values, parent=None):
+    def __init__(self, values, ticker="", parent=None):
         super().__init__(parent)
         self.values = values
-        self.setFixedSize(300, 100)
+        self.ticker = ticker
+        self.setMinimumHeight(150)
+        self.setMinimumWidth(250)
+        self.setToolTip("Velas diarias · 1 año · medias móviles 20, 50 y 200")
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#64748b"), 1))
-        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
-        if len(self.values) < 2:
+        painter.fillRect(self.rect(), QColor("#ffffff"))
+        painter.setPen(QColor("#263238"))
+        painter.drawText(7, 17, self.ticker)
+        for x, label, color in ((48, "SMA 20", "#d946ef"), (105, "SMA 50", "#f97316"),
+                                (162, "SMA 200", "#eab308")):
+            painter.setPen(QColor(color))
+            painter.drawText(x, 17, label)
+        if not self.values or not isinstance(self.values[0], dict):
+            painter.setPen(QColor("#718096"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Gráfico no disponible")
             return
-        low, high = min(self.values), max(self.values)
-        span = high - low or 1
-        points = QPolygonF()
-        pad_x, pad_y = 8, 8
-        for idx, value in enumerate(self.values):
-            x = pad_x + idx * (self.width() - 2 * pad_x) / (len(self.values) - 1)
-            y = self.height() - pad_y - (value - low) * (self.height() - 2 * pad_y) / span
-            points.append(QPointF(x, y))
-        painter.setPen(QPen(QColor("#22c55e" if self.values[-1] >= self.values[0] else "#ef4444"), 2))
-        painter.drawPolyline(points)
+        data = self.values[-220:]
+        w, h = self.width(), self.height()
+        left, right, top, bottom = 35, 28, 23, h - 18
+        plot_h = max(35, (bottom - top) * 0.78)
+        vol_top = top + plot_h + 5
+        lows = [x["Low"] for x in data]
+        highs = [x["High"] for x in data]
+        lo, hi = min(lows), max(highs)
+        pad = max((hi - lo) * .06, abs(hi) * .001)
+        lo, hi = lo - pad, hi + pad
+        span = hi - lo or 1
+        xstep = (w - left - right) / max(1, len(data))
+        y_price = lambda value: top + (hi - value) * plot_h / span
+        # Fondo y rejilla tenue como en un gráfico bursátil clásico.
+        painter.setPen(QPen(QColor("#d5dce1"), 1, Qt.PenStyle.DotLine))
+        for line in range(5):
+            y = top + line * plot_h / 4
+            painter.drawLine(left, int(y), w - right, int(y))
+            price = hi - line * span / 4
+            painter.setPen(QColor("#687780"))
+            painter.drawText(w - right + 3, int(y + 4), f"{price:.1f}")
+            painter.setPen(QPen(QColor("#d5dce1"), 1, Qt.PenStyle.DotLine))
+        max_volume = max((x.get("Volume", 0) for x in data), default=1) or 1
+        for idx, candle in enumerate(data):
+            x = left + (idx + .5) * xstep
+            up = candle["Close"] >= candle["Open"]
+            color = QColor("#16a34a" if up else "#ef4444")
+            painter.setPen(QPen(color, 1))
+            painter.drawLine(int(x), int(y_price(candle["High"])), int(x), int(y_price(candle["Low"])))
+            y1, y2 = y_price(candle["Open"]), y_price(candle["Close"])
+            body_h = max(1, abs(y1 - y2))
+            painter.fillRect(int(x - max(1, xstep * .32)), int(min(y1, y2)),
+                             max(2, int(xstep * .64)), int(body_h), color)
+            vol_h = candle.get("Volume", 0) / max_volume * max(8, bottom - vol_top)
+            painter.fillRect(int(x - max(1, xstep * .32)), int(bottom - vol_h),
+                             max(2, int(xstep * .64)), int(vol_h), QColor("#aab6bd"))
+        closes = [x["Close"] for x in data]
+        for window, color in ((20, "#d946ef"), (50, "#f97316"), (200, "#eab308")):
+            points = QPolygonF()
+            for idx in range(window - 1, len(closes)):
+                avg = sum(closes[idx - window + 1:idx + 1]) / window
+                points.append(QPointF(left + (idx + .5) * xstep, y_price(avg)))
+            if len(points) > 1:
+                painter.setPen(QPen(QColor(color), 1))
+                painter.drawPolyline(points)
+        painter.setPen(QColor("#64748b"))
+        painter.drawText(5, int(top + 10), "DAILY")
+        painter.drawText(left, h - 3, "1 año · Volumen")
 
 
 def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
@@ -2267,23 +2321,17 @@ class MainWindow(QMainWindow):
                 "QLabel { color: #f8fafc; border: 0; }"
             )
             layout = QVBoxLayout(card)
-            layout.setContentsMargins(14, 12, 14, 12)
-            title = QLabel(ticker)
-            title.setStyleSheet("font-size: 15px; font-weight: bold;")
-            layout.addWidget(title)
+            layout.setContentsMargins(5, 4, 5, 4)
             details = self._company_info_cache.get(ticker)
-            name = QLabel(details.get("name", "Cargando empresa…") if details else "Cargando empresa…")
-            layout.addWidget(name)
-            market = QLabel(f"Mercado: {details.get('market', 'Cargando…') if details else 'Cargando…'}")
-            sector = QLabel(f"Sector: {details.get('sector', 'Cargando…') if details else 'Cargando…'}")
-            layout.addWidget(market)
-            layout.addWidget(sector)
-            chart = MiniPriceChart(details.get("history", []) if details else [], card)
-            chart.setMinimumHeight(72)
-            chart.setMaximumHeight(90)
-            layout.addWidget(QLabel("Amplitud · 3 meses"))
+            chart = MiniPriceChart(details.get("history", []) if details else [], ticker, card)
             layout.addWidget(chart)
-            self._company_card_widgets[ticker] = (name, market, sector, chart)
+            if details:
+                chart.setToolTip(
+                    f"{details.get('name', ticker)} · {details.get('market', 'Mercado no disponible')} · "
+                    f"{details.get('sector', 'Sector no disponible')}\n"
+                    "Velas diarias · 1 año · medias móviles 20, 50 y 200"
+                )
+            self._company_card_widgets[ticker] = chart
             self._company_cards_layout.addWidget(card, index // 3, index % 3)
 
             if ticker not in self._company_info_cache and not any(
@@ -2303,11 +2351,13 @@ class MainWindow(QMainWindow):
         widgets = self._company_card_widgets.get(ticker)
         if not widgets:
             return
-        name, market, sector, chart = widgets
-        name.setText(details.get("name", "No disponible"))
-        market.setText(f"Mercado: {details.get('market', 'No disponible')}")
-        sector.setText(f"Sector: {details.get('sector', 'No disponible')}")
+        chart = widgets
         chart.values = details.get("history", [])
+        chart.setToolTip(
+            f"{details.get('name', ticker)} · {details.get('market', 'Mercado no disponible')} · "
+            f"{details.get('sector', 'Sector no disponible')}\n"
+            "Velas diarias · 1 año · medias móviles 20, 50 y 200"
+        )
         chart.update()
 
     def _display_company_info(self, ticker, details):
@@ -2333,7 +2383,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(name)
         layout.addWidget(QLabel(f"Mercado: {details['market']}"))
         layout.addWidget(QLabel(f"Sector: {details['sector']}"))
-        layout.addWidget(MiniPriceChart(details.get("history", []), popup))
+        layout.addWidget(MiniPriceChart(details.get("history", []), ticker, popup))
         popup.adjustSize()
         popup.move(self.E_Resultados.viewport().mapToGlobal(rect.bottomLeft()) + QPoint(0, 4))
         popup.show()

@@ -4,6 +4,9 @@ const statusMessage = document.querySelector('#statusMessage');
 const filterText = document.querySelector('#filterText');
 const filterSignal = document.querySelector('#filterSignal');
 const filterScore = document.querySelector('#filterScore');
+const chartsButton = document.querySelector('#chartsButton');
+const tableView = document.querySelector('#tableView');
+const chartsView = document.querySelector('#chartsView');
 const emailForm = document.querySelector('#emailForm');
 const healthStatus = document.querySelector('#healthStatus');
 const listFilesInput = document.querySelector('#listFiles');
@@ -42,6 +45,8 @@ const WEB_UNAVAILABLE_MESSAGE = 'La pagina web no esta operativa. Yahoo Finance 
 let lastResults = [];
 let loadedTickers = [];
 let stopRequested = false;
+let chartsMode = false;
+const companyOverviewCache = new Map();
 
 function normalizeListTicker(value) {
   const ticker = value.trim().toUpperCase();
@@ -164,6 +169,14 @@ function renderResults() {
     return (!search || ticker.includes(search) || signal.includes(search)) && matchesSignal && score >= minimumScore;
   });
 
+  tableView.hidden = chartsMode;
+  chartsView.hidden = !chartsMode;
+  chartsButton.setAttribute('aria-pressed', String(chartsMode));
+  chartsButton.textContent = chartsMode ? 'Tabla' : 'Graficos';
+  if (chartsMode) {
+    renderCompanyCards(filtered);
+  }
+
   if (filtered.length === 0) {
     resultsBody.innerHTML = '<tr><td colspan="9" class="empty-state">No se encontraron resultados.</td></tr>';
     return;
@@ -186,6 +199,53 @@ function renderResults() {
       <td>${escapeHtml(result.date || '—')}</td>
     </tr>`;
   }).join('');
+}
+
+function makeSparkline(history) {
+  const values = (history || []).map((point) => Number(point.close)).filter(Number.isFinite);
+  if (values.length < 2) return '<p class="chart-empty">Histórico no disponible</p>';
+  const width = 320;
+  const height = 96;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const points = values.map((value, index) => `${(index / (values.length - 1) * width).toFixed(1)},${(height - (value - min) / span * (height - 12) - 6).toFixed(1)}`).join(' ');
+  const trendColor = values.at(-1) >= values[0] ? '#34d399' : '#fb7185';
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evolución del precio de cierre en tres meses"><polyline points="${points}" fill="none" stroke="${trendColor}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function renderCompanyCards(items) {
+  if (!items.length) {
+    chartsView.innerHTML = '<p class="empty-state">No se encontraron resultados.</p>';
+    return;
+  }
+  chartsView.innerHTML = items.map((item) => {
+    const overview = companyOverviewCache.get(item.ticker);
+    const result = item.result;
+    const title = overview?.name || item.ticker;
+    return `<article class="company-card" data-ticker="${escapeHtml(item.ticker)}">
+      <div class="company-card-heading"><div><p class="eyebrow">${escapeHtml(item.ticker)}</p><h3>${escapeHtml(title)}</h3></div>${result?.signal ? `<span class="signal ${escapeHtml(result.signal.toLowerCase().replaceAll(' ', '-'))}">${escapeHtml(result.signal)}</span>` : ''}</div>
+      <dl class="company-meta"><div><dt>Mercado</dt><dd>${escapeHtml(overview?.market || 'Cargando…')}</dd></div><div><dt>Sector</dt><dd>${escapeHtml(overview?.sector || 'Cargando…')}</dd></div></dl>
+      <div class="chart-heading"><strong>Amplitud · 3 meses</strong>${overview?.history?.length ? `<span>${overview.history[0].close.toLocaleString('es-ES', { maximumFractionDigits: 2 })} → ${overview.history.at(-1).close.toLocaleString('es-ES', { maximumFractionDigits: 2 })}</span>` : ''}</div>
+      ${overview ? makeSparkline(overview.history) : '<p class="chart-empty">Cargando histórico…</p>'}
+    </article>`;
+  }).join('');
+
+  for (const item of items) {
+    if (companyOverviewCache.has(item.ticker) || item.error) continue;
+    companyOverviewCache.set(item.ticker, null);
+    fetch(`/api/company-overview/${encodeURIComponent(item.ticker)}`)
+      .then(readJsonResponse)
+      .then((payload) => {
+        if (!payload.success) throw new Error(payload.error || 'No se pudo obtener la ficha.');
+        companyOverviewCache.set(item.ticker, payload.overview);
+        if (chartsMode) renderResults();
+      })
+      .catch(() => {
+        companyOverviewCache.set(item.ticker, { name: item.ticker, market: 'No disponible', sector: 'No disponible', history: [] });
+        if (chartsMode) renderResults();
+      });
+  }
 }
 
 function isWebUnavailableError(error) {
@@ -424,5 +484,6 @@ listFolderInput.addEventListener('change', () => importLists(listFolderInput.fil
 filterText.addEventListener('input', renderResults);
 filterSignal.addEventListener('change', renderResults);
 filterScore.addEventListener('input', renderResults);
+chartsButton.addEventListener('click', () => { chartsMode = !chartsMode; renderResults(); });
 loadConfig();
 checkHealth();

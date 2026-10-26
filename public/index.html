@@ -94,9 +94,10 @@
           <label class="compact-field"><span>Buscar</span><input id="filterText" placeholder="Ticker o señal"></label>
           <label class="compact-field"><span>Signal</span><select id="filterSignal"><option value="">Todas</option><option value="comprar">Comprar</option><option value="vender">Vender</option><option value="esperar">Esperar</option></select></label>
           <label class="compact-field"><span>Score mínimo</span><input id="filterScore" type="number" min="0" max="100" value="0"></label>
+          <button class="secondary-button view-toggle" id="chartsButton" type="button" aria-pressed="false">Graficos</button>
         </div>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap" id="tableView">
         <table>
           <thead>
             <tr>
@@ -108,6 +109,7 @@
           </tbody>
         </table>
       </div>
+      <div id="chartsView" class="company-grid" hidden aria-live="polite"></div>
       <div class="message" id="statusMessage" role="status"></div>
     </section>
 

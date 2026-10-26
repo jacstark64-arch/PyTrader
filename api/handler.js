@@ -1,5 +1,6 @@
 const { analyzeTickers } = require('./analyze');
 const { sendEmail } = require('./email');
+const { fetchCompanyOverview } = require('../src/company-overview');
 
 function jsonResponse(body, statusCode = 200) {
   return {
@@ -41,6 +42,19 @@ async function handleRequest(request, response) {
   if (request.method === 'GET' && request.url === '/health') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({ status: 'ok', service: 'pytrader-web' }));
+    return;
+  }
+
+  if (request.method === 'GET' && request.url.startsWith('/api/company-overview/')) {
+    try {
+      const ticker = decodeURIComponent(request.url.slice('/api/company-overview/'.length));
+      const overview = await fetchCompanyOverview(ticker);
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ success: true, overview }));
+    } catch (error) {
+      response.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: error.message || 'No se pudo obtener la ficha.' }));
+    }
     return;
   }
 

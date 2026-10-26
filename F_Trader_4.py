@@ -1,7 +1,7 @@
 #***********************************************************
 #
 #              26/10/2026
-#            Mi Screener V6.2
+#            Mi Screener V6.3
 #
 #***********************************************************
 import sys
@@ -51,6 +51,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QFormLayout,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QComboBox,
     QSpinBox,
     QDoubleSpinBox,
@@ -60,7 +61,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QWidget,
     QLabel,
     QFrame,
-    QVBoxLayout,
+    QScrollArea,
 )
 
 import numpy as np
@@ -1385,6 +1386,10 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.clicked.connect(self.on_b_carpeta)
         self.B_Ticker.clicked.connect(self.on_b_analizar)
         self.B_Cancelar.clicked.connect(self.on_b_cancelar)
+        self.B_Graficos = QPushButton("Graficos", self.centralwidget)
+        self.B_Graficos.setObjectName("B_Graficos")
+        self.B_Graficos.setGeometry(1480, 860, 100, 35)
+        self.B_Graficos.clicked.connect(self.toggle_graphs_view)
         self.B_Reiniciar.clicked.connect(self.on_b_reiniciar)
         self.B_Reiniciar.setEnabled(False)
         self.B_Borrar = getattr(self, "B_Borrar", None)
@@ -1411,6 +1416,17 @@ class MainWindow(QMainWindow):
         self._ticker_hover = None
         self._company_info_cache = {}
         self._company_info_threads = []
+        self._company_card_widgets = {}
+        self._graphs_view_active = False
+        self._company_cards_scroll = QScrollArea(self.G_Resultados)
+        self._company_cards_scroll.setGeometry(10, 65, 1271, 640)
+        self._company_cards_scroll.setWidgetResizable(True)
+        self._company_cards_scroll.hide()
+        self._company_cards_container = QWidget()
+        self._company_cards_layout = QGridLayout(self._company_cards_container)
+        self._company_cards_layout.setContentsMargins(10, 10, 10, 10)
+        self._company_cards_layout.setSpacing(12)
+        self._company_cards_scroll.setWidget(self._company_cards_container)
         self._company_info_popup = None
         self._company_info_timer = QTimer(self)
         self._company_info_timer.setSingleShot(True)
@@ -1559,6 +1575,11 @@ class MainWindow(QMainWindow):
             QPushButton#B_Cancelar {
                 background-color: #b85252;
                 border-color: #964141;
+            }
+
+            QPushButton#B_Graficos {
+                background-color: #2563eb;
+                border-color: #1d4ed8;
             }
 
             QPushButton#B_Salir {
@@ -2186,8 +2207,99 @@ class MainWindow(QMainWindow):
 
     def _on_company_info_ready(self, ticker, details):
         self._company_info_cache[ticker] = details
+        self._update_company_card(ticker, details)
         if self._ticker_hover and self._ticker_hover[2] == ticker:
             self._display_company_info(ticker, details)
+
+    def toggle_graphs_view(self):
+        self._graphs_view_active = not self._graphs_view_active
+        self.B_Graficos.setText("Tabla" if self._graphs_view_active else "Graficos")
+        self.E_Resultados.setVisible(not self._graphs_view_active)
+        self._company_cards_scroll.setVisible(self._graphs_view_active)
+        if self._graphs_view_active:
+            self.refresh_company_cards()
+
+    def refresh_company_cards(self):
+        while self._company_cards_layout.count():
+            item = self._company_cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._company_card_widgets.clear()
+
+        signal_filter = getattr(self, "signal_filter_value", "todas")
+        results = []
+        for result in self.cumulative_results:
+            if int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY:
+                continue
+            signal = str(result.get("Signal", "")).upper()
+            if signal_filter == "comprar" and "COMPRA" not in signal:
+                continue
+            if signal_filter == "vender" and "VENTA" not in signal:
+                continue
+            if signal_filter == "esperar" and "ESPERA" not in signal:
+                continue
+            results.append(result)
+        results.sort(key=lambda row: int(row.get("Score", 0)), reverse=True)
+
+        if not results:
+            empty = QLabel("No hay resultados con los filtros actuales.")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._company_cards_layout.addWidget(empty, 0, 0)
+            return
+
+        for index, result in enumerate(results):
+            ticker = str(result.get("Ticker", "")).strip()
+            if not ticker:
+                continue
+            card = QFrame(self._company_cards_container)
+            card.setObjectName("CompanyCard")
+            card.setStyleSheet(
+                "QFrame#CompanyCard { background: #172033; color: #f8fafc; "
+                "border: 1px solid #334155; border-radius: 10px; }"
+                "QLabel { color: #f8fafc; border: 0; }"
+            )
+            layout = QVBoxLayout(card)
+            layout.setContentsMargins(14, 12, 14, 12)
+            title = QLabel(ticker)
+            title.setStyleSheet("font-size: 15px; font-weight: bold;")
+            layout.addWidget(title)
+            details = self._company_info_cache.get(ticker)
+            name = QLabel(details.get("name", "Cargando empresa…") if details else "Cargando empresa…")
+            layout.addWidget(name)
+            market = QLabel(f"Mercado: {details.get('market', 'Cargando…') if details else 'Cargando…'}")
+            sector = QLabel(f"Sector: {details.get('sector', 'Cargando…') if details else 'Cargando…'}")
+            layout.addWidget(market)
+            layout.addWidget(sector)
+            chart = MiniPriceChart(details.get("history", []) if details else [], card)
+            layout.addWidget(QLabel("Amplitud · 3 meses"))
+            layout.addWidget(chart)
+            self._company_card_widgets[ticker] = (name, market, sector, chart)
+            self._company_cards_layout.addWidget(card, index // 3, index % 3)
+
+            if ticker not in self._company_info_cache and not any(
+                thread.ticker == ticker and thread.isRunning()
+                for thread in self._company_info_threads
+            ):
+                thread = CompanyInfoThread(ticker)
+                thread.info_ready.connect(self._on_company_info_ready)
+                thread.finished.connect(
+                    lambda worker=thread: self._company_info_threads.remove(worker)
+                    if worker in self._company_info_threads else None
+                )
+                self._company_info_threads.append(thread)
+                thread.start()
+
+    def _update_company_card(self, ticker, details):
+        widgets = self._company_card_widgets.get(ticker)
+        if not widgets:
+            return
+        name, market, sector, chart = widgets
+        name.setText(details.get("name", "No disponible"))
+        market.setText(f"Mercado: {details.get('market', 'No disponible')}")
+        sector.setText(f"Sector: {details.get('sector', 'No disponible')}")
+        chart.values = details.get("history", [])
+        chart.update()
 
     def _display_company_info(self, ticker, details):
         hover = self._ticker_hover
@@ -2430,6 +2542,8 @@ class MainWindow(QMainWindow):
     def on_analysis_result(self, result):
         self.cumulative_results.append(result)
         self._add_result_to_table(result)
+        if self._graphs_view_active:
+            self.refresh_company_cards()
 
     def _add_result_to_table(self, result):
         if int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY:
@@ -2485,6 +2599,8 @@ class MainWindow(QMainWindow):
     def set_signal_filter(self, selected):
         self.signal_filter_value = selected
         self.apply_signal_filter()
+        if self._graphs_view_active:
+            self.refresh_company_cards()
 
     def _style_result_item(self, item, header, value):
         text = str(value).upper()

@@ -58,7 +58,7 @@ class Ui_MainWindow(object):
         self.B_Cancelar.setFont(font)
         self.B_Salir = QPushButton(self.centralwidget)
         self.B_Salir.setObjectName(u"B_Salir")
-        self.B_Salir.setGeometry(QRect(1520, 860, 100, 35))
+        self.B_Salir.setGeometry(QRect(1640, 860, 100, 35))
         self.B_Salir.setFont(font)
         self.G_Ticker = QGroupBox(self.centralwidget)
         self.G_Ticker.setObjectName(u"G_Ticker")

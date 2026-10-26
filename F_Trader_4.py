@@ -1426,6 +1426,10 @@ class MainWindow(QMainWindow):
         self._company_cards_layout = QGridLayout(self._company_cards_container)
         self._company_cards_layout.setContentsMargins(10, 10, 10, 10)
         self._company_cards_layout.setSpacing(12)
+        for column in range(3):
+            self._company_cards_layout.setColumnStretch(column, 1)
+        for row in range(3):
+            self._company_cards_layout.setRowStretch(row, 1)
         self._company_cards_scroll.setWidget(self._company_cards_container)
         self._company_info_popup = None
         self._company_info_timer = QTimer(self)
@@ -2254,6 +2258,9 @@ class MainWindow(QMainWindow):
                 continue
             card = QFrame(self._company_cards_container)
             card.setObjectName("CompanyCard")
+            # Mantener una cuadrícula estable de 3 × 3, aunque cambie el
+            # número de resultados. Las tarjetas extra quedan en el scroll.
+            card.setFixedHeight(190)
             card.setStyleSheet(
                 "QFrame#CompanyCard { background: #172033; color: #f8fafc; "
                 "border: 1px solid #334155; border-radius: 10px; }"
@@ -2272,6 +2279,8 @@ class MainWindow(QMainWindow):
             layout.addWidget(market)
             layout.addWidget(sector)
             chart = MiniPriceChart(details.get("history", []) if details else [], card)
+            chart.setMinimumHeight(72)
+            chart.setMaximumHeight(90)
             layout.addWidget(QLabel("Amplitud · 3 meses"))
             layout.addWidget(chart)
             self._company_card_widgets[ticker] = (name, market, sector, chart)

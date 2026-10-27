@@ -2600,7 +2600,7 @@ class MainWindow(QMainWindow):
                 "Falta el paquete 'PyQt6-WebEngine' para mostrar el gráfico embebido "
                 "(instálalo con: pip install PyQt6-WebEngine). Abriendo en el navegador..."
             )
-            url = QUrl(f"https://www.tradingview.com/chart/?symbol={tv_symbol}")
+            url = QUrl(f"https://es.tradingview.com/chart/?symbol={tv_symbol}")
             if not QDesktopServices.openUrl(url):
                 self.append_to_visor(f"No se pudo abrir TradingView para {ticker}.")
             return

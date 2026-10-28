@@ -1236,9 +1236,10 @@ class CompanyInfoThread(QThread):
                 details["history"] = [
                     {
                         "Date": str(index),
-                        key: (float(row[key]) if key != "Volume" and not pd.isna(row[key])
-                              else (float(row[key]) if key == "Volume" and not pd.isna(row[key]) else 0.0))
-                        for key in ("Open", "High", "Low", "Close", "Volume")
+                        **{
+                            key: (float(row[key]) if not pd.isna(row[key]) else 0.0)
+                            for key in ("Open", "High", "Low", "Close", "Volume")
+                        },
                     }
                     for _, row in history.dropna(subset=["Open", "High", "Low", "Close"]).iterrows()
                 ]

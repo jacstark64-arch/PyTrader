@@ -1216,9 +1216,10 @@ class AnalysisThread(QThread):
 class CompanyInfoThread(QThread):
     info_ready = pyqtSignal(str, object)
 
-    def __init__(self, ticker):
+    def __init__(self, ticker, interval="1d"):
         super().__init__()
         self.ticker = ticker
+        self.interval = interval
 
     def run(self):
         try:
@@ -1227,11 +1228,14 @@ class CompanyInfoThread(QThread):
                 "name": info.get("longName") or info.get("shortName") or "No disponible",
                 "market": info.get("fullExchangeName") or info.get("exchange") or "No disponible",
                 "sector": info.get("sector") or "No disponible",
+                "interval": self.interval,
             }
             try:
-                history = yf.Ticker(normalize_ticker(self.ticker)).history(period="1y", interval="1d")
+                period = {"1d": "1y", "1wk": "5y", "1mo": "10y"}.get(self.interval, "1y")
+                history = yf.Ticker(normalize_ticker(self.ticker)).history(period=period, interval=self.interval)
                 details["history"] = [
                     {
+                        "Date": str(index),
                         key: (float(row[key]) if key != "Volume" and not pd.isna(row[key])
                               else (float(row[key]) if key == "Volume" and not pd.isna(row[key]) else 0.0))
                         for key in ("Open", "High", "Low", "Close", "Volume")
@@ -1243,7 +1247,7 @@ class CompanyInfoThread(QThread):
         except Exception:
             details = {
                 "name": "No disponible", "market": "No disponible",
-                "sector": "No disponible", "history": [],
+                "sector": "No disponible", "history": [], "interval": self.interval,
             }
         self.info_ready.emit(self.ticker, details)
 
@@ -1259,6 +1263,7 @@ class MiniPriceChart(QWidget):
         self.ticker = ticker
         self.setMinimumHeight(150)
         self.setMinimumWidth(250)
+        self.interval = "1d"
         self.setToolTip("Velas diarias · 1 año · medias móviles 20, 50 y 200")
 
     def paintEvent(self, _event):
@@ -1321,8 +1326,10 @@ class MiniPriceChart(QWidget):
                 painter.setPen(QPen(QColor(color), 1))
                 painter.drawPolyline(points)
         painter.setPen(QColor("#64748b"))
-        painter.drawText(5, int(top + 10), "DAILY")
-        painter.drawText(left, h - 3, "1 año · Volumen")
+        labels = {"1d": "DIARIAS", "1wk": "SEMANALES", "1mo": "MENSUALES"}
+        ranges = {"1d": "1 año", "1wk": "5 años", "1mo": "10 años"}
+        painter.drawText(5, int(top + 10), labels.get(self.interval, "DIARIAS"))
+        painter.drawText(left, h - 3, f"{ranges.get(self.interval, '1 año')} · Volumen")
 
     def mouseDoubleClickEvent(self, event):
         self.double_clicked.emit(self.ticker)
@@ -1446,9 +1453,24 @@ class MainWindow(QMainWindow):
         self.B_Carpeta.clicked.connect(self.on_b_carpeta)
         self.B_Ticker.clicked.connect(self.on_b_analizar)
         self.B_Cancelar.clicked.connect(self.on_b_cancelar)
-        self.B_Graficos = QPushButton("Graficos", self.centralwidget)
+        self._chart_interval = "1d"
+        self._chart_period_buttons = QButtonGroup(self.G_Resultados)
+        self._chart_period_buttons.setExclusive(True)
+        for index, (label, interval) in enumerate((
+            ("Diarias", "1d"), ("Semanales", "1wk"), ("Mensuales", "1mo"),
+        )):
+            button = QPushButton(label, self.G_Resultados)
+            button.setObjectName("ChartPeriodButton")
+            button.setCheckable(True)
+            button.setGeometry(10 + index * 88, 31, 82, 29)
+            button.setChecked(index == 0)
+            button.clicked.connect(
+                lambda checked, selected=interval: self.set_chart_interval(selected)
+            )
+            self._chart_period_buttons.addButton(button)
+        self.B_Graficos = QPushButton("Gráficos", self.G_Resultados)
         self.B_Graficos.setObjectName("B_Graficos")
-        self.B_Graficos.setGeometry(1480, 860, 100, 35)
+        self.B_Graficos.setGeometry(280, 31, 92, 29)
         self.B_Graficos.clicked.connect(self.toggle_graphs_view)
         self.B_Reiniciar.clicked.connect(self.on_b_reiniciar)
         self.B_Reiniciar.setEnabled(False)
@@ -1622,6 +1644,18 @@ class MainWindow(QMainWindow):
             QPushButton#SignalFilterButton:checked {
                 background-color: #16a34a;
                 border-color: #15803d;
+                color: #ffffff;
+            }
+
+            QPushButton#ChartPeriodButton {
+                background-color: #475569;
+                border-color: #334155;
+                padding: 0 4px;
+            }
+
+            QPushButton#ChartPeriodButton:checked {
+                background-color: #2563eb;
+                border-color: #1d4ed8;
                 color: #ffffff;
             }
 
@@ -2255,12 +2289,14 @@ class MainWindow(QMainWindow):
         if not hover:
             return
         ticker = hover[2]
-        if ticker in self._company_info_cache:
-            self._display_company_info(ticker, self._company_info_cache[ticker])
+        cache_key = (ticker, self._chart_interval)
+        if cache_key in self._company_info_cache:
+            self._display_company_info(ticker, self._company_info_cache[cache_key])
             return
-        if any(thread.ticker == ticker and thread.isRunning() for thread in self._company_info_threads):
+        if any(thread.ticker == ticker and thread.interval == self._chart_interval and thread.isRunning()
+               for thread in self._company_info_threads):
             return
-        thread = CompanyInfoThread(ticker)
+        thread = CompanyInfoThread(ticker, self._chart_interval)
         thread.info_ready.connect(self._on_company_info_ready)
         thread.finished.connect(
             lambda worker=thread: self._company_info_threads.remove(worker)
@@ -2270,16 +2306,29 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_company_info_ready(self, ticker, details):
-        self._company_info_cache[ticker] = details
-        self._update_company_card(ticker, details)
-        if self._ticker_hover and self._ticker_hover[2] == ticker:
+        cache_key = (ticker, details.get("interval", "1d"))
+        self._company_info_cache[cache_key] = details
+        if details.get("interval") == self._chart_interval:
+            self._update_company_card(ticker, details)
+        if (details.get("interval") == self._chart_interval and self._ticker_hover
+                and self._ticker_hover[2] == ticker):
             self._display_company_info(ticker, details)
 
     def toggle_graphs_view(self):
         self._graphs_view_active = not self._graphs_view_active
-        self.B_Graficos.setText("Tabla" if self._graphs_view_active else "Graficos")
+        self.B_Graficos.setText("Tabla" if self._graphs_view_active else "Gráficos")
         self.E_Resultados.setVisible(not self._graphs_view_active)
         self._company_cards_scroll.setVisible(self._graphs_view_active)
+        if self._graphs_view_active:
+            self.refresh_company_cards()
+
+    def set_chart_interval(self, interval):
+        if interval not in ("1d", "1wk", "1mo") or interval == self._chart_interval:
+            return
+        self._chart_interval = interval
+        self._hide_company_info_popup()
+        for button in self._chart_period_buttons.buttons():
+            button.setChecked(button.text() == {"1d": "Diarias", "1wk": "Semanales", "1mo": "Mensuales"}[interval])
         if self._graphs_view_active:
             self.refresh_company_cards()
 
@@ -2328,24 +2377,31 @@ class MainWindow(QMainWindow):
             )
             layout = QVBoxLayout(card)
             layout.setContentsMargins(5, 4, 5, 4)
-            details = self._company_info_cache.get(ticker)
+            cache_key = (ticker, self._chart_interval)
+            details = self._company_info_cache.get(cache_key)
             chart = MiniPriceChart(details.get("history", []) if details else [], ticker, card)
+            chart.interval = self._chart_interval
             chart.double_clicked.connect(self.open_ticker_chart)
             layout.addWidget(chart)
             if details:
+                label, period = {
+                    "1d": ("diarias", "1 año"),
+                    "1wk": ("semanales", "5 años"),
+                    "1mo": ("mensuales", "10 años"),
+                }.get(self._chart_interval, ("diarias", "1 año"))
                 chart.setToolTip(
                     f"{details.get('name', ticker)} · {details.get('market', 'Mercado no disponible')} · "
                     f"{details.get('sector', 'Sector no disponible')}\n"
-                    "Velas diarias · 1 año · medias móviles 20, 50 y 200"
+                    f"Velas {label} · {period} · medias móviles 20, 50 y 200"
                 )
             self._company_card_widgets[ticker] = chart
             self._company_cards_layout.addWidget(card, index // 3, index % 3)
 
-            if ticker not in self._company_info_cache and not any(
-                thread.ticker == ticker and thread.isRunning()
+            if cache_key not in self._company_info_cache and not any(
+                thread.ticker == ticker and thread.interval == self._chart_interval and thread.isRunning()
                 for thread in self._company_info_threads
             ):
-                thread = CompanyInfoThread(ticker)
+                thread = CompanyInfoThread(ticker, self._chart_interval)
                 thread.info_ready.connect(self._on_company_info_ready)
                 thread.finished.connect(
                     lambda worker=thread: self._company_info_threads.remove(worker)
@@ -2360,10 +2416,16 @@ class MainWindow(QMainWindow):
             return
         chart = widgets
         chart.values = details.get("history", [])
+        chart.interval = details.get("interval", "1d")
+        label, period = {
+            "1d": ("diarias", "1 año"),
+            "1wk": ("semanales", "5 años"),
+            "1mo": ("mensuales", "10 años"),
+        }.get(chart.interval, ("diarias", "1 año"))
         chart.setToolTip(
             f"{details.get('name', ticker)} · {details.get('market', 'Mercado no disponible')} · "
             f"{details.get('sector', 'Sector no disponible')}\n"
-            "Velas diarias · 1 año · medias móviles 20, 50 y 200"
+            f"Velas {label} · {period} · medias móviles 20, 50 y 200"
         )
         chart.update()
 
@@ -2390,7 +2452,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(name)
         layout.addWidget(QLabel(f"Mercado: {details['market']}"))
         layout.addWidget(QLabel(f"Sector: {details['sector']}"))
-        layout.addWidget(MiniPriceChart(details.get("history", []), ticker, popup))
+        chart = MiniPriceChart(details.get("history", []), ticker, popup)
+        chart.interval = details.get("interval", self._chart_interval)
+        layout.addWidget(chart)
         popup.adjustSize()
         popup.move(self.E_Resultados.viewport().mapToGlobal(rect.bottomLeft()) + QPoint(0, 4))
         popup.show()

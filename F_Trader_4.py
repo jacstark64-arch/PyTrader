@@ -1222,34 +1222,38 @@ class CompanyInfoThread(QThread):
         self.interval = interval
 
     def run(self):
+        details = {
+            "name": "No disponible", "market": "No disponible",
+            "sector": "No disponible", "history": [], "interval": self.interval,
+        }
+        ticker = yf.Ticker(normalize_ticker(self.ticker))
         try:
-            info = yf.Ticker(normalize_ticker(self.ticker)).info or {}
-            details = {
+            info = ticker.info or {}
+            details.update({
                 "name": info.get("longName") or info.get("shortName") or "No disponible",
                 "market": info.get("fullExchangeName") or info.get("exchange") or "No disponible",
                 "sector": info.get("sector") or "No disponible",
-                "interval": self.interval,
-            }
-            try:
-                period = {"1d": "1y", "1wk": "5y", "1mo": "10y"}.get(self.interval, "1y")
-                history = yf.Ticker(normalize_ticker(self.ticker)).history(period=period, interval=self.interval)
-                details["history"] = [
-                    {
-                        "Date": str(index),
-                        **{
-                            key: (float(row[key]) if not pd.isna(row[key]) else 0.0)
-                            for key in ("Open", "High", "Low", "Close", "Volume")
-                        },
-                    }
-                    for _, row in history.dropna(subset=["Open", "High", "Low", "Close"]).iterrows()
-                ]
-            except Exception:
-                details["history"] = []
+            })
         except Exception:
-            details = {
-                "name": "No disponible", "market": "No disponible",
-                "sector": "No disponible", "history": [], "interval": self.interval,
-            }
+            pass
+        try:
+            period = {"1d": "1y", "1wk": "5y", "1mo": "10y"}.get(self.interval, "1y")
+            history = ticker.history(period=period, interval=self.interval)
+            # yfinance puede devolver columnas multinivel en algunas versiones.
+            if isinstance(history.columns, pd.MultiIndex):
+                history.columns = history.columns.get_level_values(0)
+            details["history"] = [
+                {
+                    "Date": str(index),
+                    **{
+                        key: (float(row[key]) if not pd.isna(row[key]) else 0.0)
+                        for key in ("Open", "High", "Low", "Close", "Volume")
+                    },
+                }
+                for index, row in history.dropna(subset=["Open", "High", "Low", "Close"]).iterrows()
+            ]
+        except Exception:
+            pass
         self.info_ready.emit(self.ticker, details)
 
 
@@ -1273,10 +1277,10 @@ class MiniPriceChart(QWidget):
         painter.fillRect(self.rect(), QColor("#ffffff"))
         painter.setPen(QColor("#263238"))
         painter.drawText(7, 17, self.ticker)
-        for x, label, color in ((48, "SMA 20", "#d946ef"), (105, "SMA 50", "#f97316"),
-                                (162, "SMA 200", "#eab308")):
+        for offset, label, color in ((116, "SMA 20", "#d946ef"), (58, "SMA 50", "#f97316"),
+                                     (0, "SMA 200", "#eab308")):
             painter.setPen(QColor(color))
-            painter.drawText(x, 17, label)
+            painter.drawText(self.width() - 8 - 55 - offset, 17, label)
         if not self.values or not isinstance(self.values[0], dict):
             painter.setPen(QColor("#718096"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Gráfico no disponible")

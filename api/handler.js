@@ -47,8 +47,9 @@ async function handleRequest(request, response) {
 
   if (request.method === 'GET' && request.url.startsWith('/api/company-overview/')) {
     try {
-      const ticker = decodeURIComponent(request.url.slice('/api/company-overview/'.length));
-      const overview = await fetchCompanyOverview(ticker);
+      const requestUrl = new URL(request.url, 'http://localhost');
+      const ticker = decodeURIComponent(requestUrl.pathname.slice('/api/company-overview/'.length));
+      const overview = await fetchCompanyOverview(ticker, requestUrl.searchParams.get('interval') || '1d');
       response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       response.end(JSON.stringify({ success: true, overview }));
     } catch (error) {

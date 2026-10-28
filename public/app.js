@@ -5,6 +5,7 @@ const filterText = document.querySelector('#filterText');
 const filterSignal = document.querySelector('#filterSignal');
 const filterScore = document.querySelector('#filterScore');
 const chartsButton = document.querySelector('#chartsButton');
+const chartPeriodButtons = [...document.querySelectorAll('[data-chart-interval]')];
 const tableView = document.querySelector('#tableView');
 const chartsView = document.querySelector('#chartsView');
 const emailForm = document.querySelector('#emailForm');
@@ -46,7 +47,14 @@ let lastResults = [];
 let loadedTickers = [];
 let stopRequested = false;
 let chartsMode = false;
+let chartInterval = '1d';
 const companyOverviewCache = new Map();
+
+const CHART_INTERVALS = Object.freeze({
+  '1d': { label: 'Diarias', range: '3 meses' },
+  '1w': { label: 'Semanales', range: '1 año' },
+  '1mo': { label: 'Mensuales', range: '5 años' },
+});
 
 function normalizeListTicker(value) {
   const ticker = value.trim().toUpperCase();
@@ -173,6 +181,11 @@ function renderResults() {
   chartsView.hidden = !chartsMode;
   chartsButton.setAttribute('aria-pressed', String(chartsMode));
   chartsButton.textContent = chartsMode ? 'Tabla' : 'Graficos';
+  chartPeriodButtons.forEach((button) => {
+    const active = button.dataset.chartInterval === chartInterval;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
   if (chartsMode) {
     renderCompanyCards(filtered);
   }
@@ -201,17 +214,30 @@ function renderResults() {
   }).join('');
 }
 
-function makeSparkline(history) {
-  const values = (history || []).map((point) => Number(point.close)).filter(Number.isFinite);
-  if (values.length < 2) return '<p class="chart-empty">Histórico no disponible</p>';
+function makeCandlestickChart(history, interval) {
+  if (!history?.length) return '<p class="chart-empty">Histórico no disponible</p>';
   const width = 320;
-  const height = 96;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const height = 120;
+  const top = 8;
+  const bottom = 108;
+  const min = Math.min(...history.map((point) => point.low));
+  const max = Math.max(...history.map((point) => point.high));
   const span = max - min || 1;
-  const points = values.map((value, index) => `${(index / (values.length - 1) * width).toFixed(1)},${(height - (value - min) / span * (height - 12) - 6).toFixed(1)}`).join(' ');
-  const trendColor = values.at(-1) >= values[0] ? '#34d399' : '#fb7185';
-  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evolución del precio de cierre en tres meses"><polyline points="${points}" fill="none" stroke="${trendColor}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const y = (value) => bottom - ((value - min) / span) * (bottom - top);
+  const step = width / history.length;
+  const candleWidth = Math.max(2, Math.min(9, step * 0.62));
+  const candles = history.map((point, index) => {
+    const x = step * (index + 0.5);
+    const rising = point.close >= point.open;
+    const color = rising ? '#34d399' : '#fb7185';
+    const bodyTop = Math.min(y(point.open), y(point.close));
+    const bodyHeight = Math.max(1, Math.abs(y(point.close) - y(point.open)));
+    return `<g stroke="${color}" fill="${color}"><line x1="${x.toFixed(1)}" y1="${y(point.high).toFixed(1)}" x2="${x.toFixed(1)}" y2="${y(point.low).toFixed(1)}" stroke-width="1.2"/><rect x="${(x - candleWidth / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${candleWidth.toFixed(1)}" height="${bodyHeight.toFixed(1)}" rx="0.6"/></g>`;
+  }).join('');
+  const firstDate = new Date(history[0].date).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+  const lastDate = new Date(history.at(-1).date).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+  const title = `Velas ${CHART_INTERVALS[interval].label.toLowerCase()}`;
+  return `<svg class="sparkline candlestick-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}, de ${firstDate} a ${lastDate}">${candles}<text x="0" y="119" class="chart-date">${firstDate}</text><text x="${width}" y="119" text-anchor="end" class="chart-date">${lastDate}</text></svg>`;
 }
 
 function renderCompanyCards(items) {
@@ -220,29 +246,31 @@ function renderCompanyCards(items) {
     return;
   }
   chartsView.innerHTML = items.map((item) => {
-    const overview = companyOverviewCache.get(item.ticker);
+    const cacheKey = `${item.ticker}:${chartInterval}`;
+    const overview = companyOverviewCache.get(cacheKey);
     const result = item.result;
     const title = overview?.name || item.ticker;
     return `<article class="company-card" data-ticker="${escapeHtml(item.ticker)}">
       <div class="company-card-heading"><div><p class="eyebrow">${escapeHtml(item.ticker)}</p><h3>${escapeHtml(title)}</h3></div>${result?.signal ? `<span class="signal ${escapeHtml(result.signal.toLowerCase().replaceAll(' ', '-'))}">${escapeHtml(result.signal)}</span>` : ''}</div>
       <dl class="company-meta"><div><dt>Mercado</dt><dd>${escapeHtml(overview?.market || 'Cargando…')}</dd></div><div><dt>Sector</dt><dd>${escapeHtml(overview?.sector || 'Cargando…')}</dd></div></dl>
-      <div class="chart-heading"><strong>Amplitud · 3 meses</strong>${overview?.history?.length ? `<span>${overview.history[0].close.toLocaleString('es-ES', { maximumFractionDigits: 2 })} → ${overview.history.at(-1).close.toLocaleString('es-ES', { maximumFractionDigits: 2 })}</span>` : ''}</div>
-      ${overview ? makeSparkline(overview.history) : '<p class="chart-empty">Cargando histórico…</p>'}
+      <div class="chart-heading"><strong>Velas ${CHART_INTERVALS[chartInterval].label.toLowerCase()} · ${CHART_INTERVALS[chartInterval].range}</strong>${overview?.history?.length ? `<span>${overview.history[0].close.toLocaleString('es-ES', { maximumFractionDigits: 2 })} → ${overview.history.at(-1).close.toLocaleString('es-ES', { maximumFractionDigits: 2 })}</span>` : ''}</div>
+      ${overview ? makeCandlestickChart(overview.history, chartInterval) : '<p class="chart-empty">Cargando histórico…</p>'}
     </article>`;
   }).join('');
 
   for (const item of items) {
-    if (companyOverviewCache.has(item.ticker) || item.error) continue;
-    companyOverviewCache.set(item.ticker, null);
-    fetch(`/api/company-overview/${encodeURIComponent(item.ticker)}`)
+    const cacheKey = `${item.ticker}:${chartInterval}`;
+    if (companyOverviewCache.has(cacheKey) || item.error) continue;
+    companyOverviewCache.set(cacheKey, null);
+    fetch(`/api/company-overview/${encodeURIComponent(item.ticker)}?interval=${encodeURIComponent(chartInterval)}`)
       .then(readJsonResponse)
       .then((payload) => {
         if (!payload.success) throw new Error(payload.error || 'No se pudo obtener la ficha.');
-        companyOverviewCache.set(item.ticker, payload.overview);
+        companyOverviewCache.set(cacheKey, payload.overview);
         if (chartsMode) renderResults();
       })
       .catch(() => {
-        companyOverviewCache.set(item.ticker, { name: item.ticker, market: 'No disponible', sector: 'No disponible', history: [] });
+        companyOverviewCache.set(cacheKey, { name: item.ticker, market: 'No disponible', sector: 'No disponible', history: [] });
         if (chartsMode) renderResults();
       });
   }
@@ -485,5 +513,9 @@ filterText.addEventListener('input', renderResults);
 filterSignal.addEventListener('change', renderResults);
 filterScore.addEventListener('input', renderResults);
 chartsButton.addEventListener('click', () => { chartsMode = !chartsMode; renderResults(); });
+chartPeriodButtons.forEach((button) => button.addEventListener('click', () => {
+  chartInterval = button.dataset.chartInterval;
+  renderResults();
+}));
 loadConfig();
 checkHealth();

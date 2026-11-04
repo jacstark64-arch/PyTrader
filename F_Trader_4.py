@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QFileDialog,
     QButtonGroup,
     QPushButton,
+    QTableWidget,
     QTableWidgetItem,
     QMessageBox,
     QAbstractItemView,
@@ -448,6 +449,44 @@ def get_pe_ratio(ticker, price=None):
     except Exception:
         return None
     return None
+
+
+def rate_fundamentals(metrics):
+    score = 0
+    evaluated = 0
+    factors = (
+        ("trailingPE", lambda value: -1 if value <= 0 or value > 40 else 1 if value <= 25 else 0),
+        ("returnOnEquity", lambda value: 1 if value >= 0.15 else 0 if value >= 0.05 else -1),
+        ("profitMargins", lambda value: 1 if value >= 0.15 else 0 if value >= 0.05 else -1),
+        ("debtToEquity", lambda value: -1 if value < 0 or value > 200 else 1 if value <= 100 else 0),
+        ("revenueGrowth", lambda value: 1 if value >= 0.08 else 0 if value >= 0 else -1),
+    )
+    for key, evaluate in factors:
+        try:
+            value = float(metrics.get(key))
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(value):
+            continue
+        score += evaluate(value)
+        evaluated += 1
+
+    if evaluated < 3:
+        return "Sin datos", "#94a3b8", "No hay suficientes fundamentales para evaluar."
+
+    average = score / evaluated
+    if average >= 0.4:
+        label, color = "Muy buena", "#16a34a"
+    elif average >= -0.2:
+        label, color = "Buena", "#f59e0b"
+    else:
+        label, color = "Mala", "#dc2626"
+    explanation = (
+        f"{label}: {score:+d} puntos de {evaluated} indicadores "
+        "(PER, ROE, margen neto, deuda/patrimonio y crecimiento de ingresos). "
+        "Evaluación orientativa, no es una recomendación de inversión."
+    )
+    return label, color, explanation
 
 
 def wilder_average(values, period):
@@ -1213,6 +1252,30 @@ class AnalysisThread(QThread):
         self.finished.emit(results)
 
 
+class FundamentalDataThread(QThread):
+    data_ready = pyqtSignal(str, object)
+
+    def __init__(self, tickers):
+        super().__init__()
+        self.tickers = list(tickers)
+
+    def run(self):
+        for ticker in self.tickers:
+            try:
+                info = yf.Ticker(normalize_ticker(ticker)).info or {}
+                metrics = {
+                    key: info.get(key)
+                    for key in (
+                        "longName", "sector", "marketCap", "currency", "trailingPE",
+                        "forwardPE", "priceToBook", "returnOnEquity", "profitMargins",
+                        "debtToEquity", "revenueGrowth", "dividendYield",
+                    )
+                }
+            except Exception as exc:
+                metrics = {"error": str(exc)}
+            self.data_ready.emit(ticker, metrics)
+
+
 class CompanyInfoThread(QThread):
     info_ready = pyqtSignal(str, object)
 
@@ -1477,6 +1540,10 @@ class MainWindow(QMainWindow):
         self.B_Graficos.setObjectName("B_Graficos")
         self.B_Graficos.setGeometry(280, 31, 92, 29)
         self.B_Graficos.clicked.connect(self.toggle_graphs_view)
+        self.B_Fundamentales = QPushButton("Fundamentales", self.G_Resultados)
+        self.B_Fundamentales.setObjectName("B_Fundamentales")
+        self.B_Fundamentales.setGeometry(380, 31, 120, 29)
+        self.B_Fundamentales.clicked.connect(self.toggle_fundamentals_view)
         self.B_Reiniciar.clicked.connect(self.on_b_reiniciar)
         self.B_Reiniciar.setEnabled(False)
         self.B_Borrar = getattr(self, "B_Borrar", None)
@@ -1500,11 +1567,35 @@ class MainWindow(QMainWindow):
         self.E_Resultados.verticalHeader().setDefaultSectionSize(30)
         self.E_Resultados.viewport().setMouseTracking(True)
         self.E_Resultados.viewport().installEventFilter(self)
+        self.E_Fundamentales = QTableWidget(self.G_Resultados)
+        self.E_Fundamentales.setObjectName("E_Fundamentales")
+        self.E_Fundamentales.setGeometry(10, 65, 1271, 640)
+        self.E_Fundamentales.setColumnCount(13)
+        self.E_Fundamentales.setHorizontalHeaderLabels([
+            "Ticker", "Semáforo", "Empresa", "Sector", "Capitalización",
+            "P/E", "P/E futuro", "Precio/Libro", "ROE", "Margen neto",
+            "Deuda/Patrimonio", "Crec. ingresos", "Dividendo",
+        ])
+        self.E_Fundamentales.setSortingEnabled(True)
+        self.E_Fundamentales.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.E_Fundamentales.setAlternatingRowColors(True)
+        self.E_Fundamentales.setShowGrid(False)
+        self.E_Fundamentales.verticalHeader().setVisible(False)
+        self.E_Fundamentales.verticalHeader().setDefaultSectionSize(30)
+        self.E_Fundamentales.cellDoubleClicked.connect(self.on_result_double_clicked)
+        self.E_Fundamentales.hide()
+        fundamental_widths = [85, 82, 190, 130, 125, 85, 95, 100, 80, 95, 130, 115, 90]
+        for column, width in enumerate(fundamental_widths):
+            self.E_Fundamentales.setColumnWidth(column, width)
         self._ticker_hover = None
         self._company_info_cache = {}
         self._company_info_threads = []
+        self._fundamental_info_cache = {}
+        self._fundamental_thread = None
+        self._fundamental_pending_tickers = []
+        self._fundamental_requested_tickers = set()
         self._company_card_widgets = {}
-        self._graphs_view_active = False
+        self._results_view = "analysis"
         self._company_cards_scroll = QScrollArea(self.G_Resultados)
         self._company_cards_scroll.setGeometry(10, 65, 1271, 640)
         self._company_cards_scroll.setWidgetResizable(True)
@@ -1683,6 +1774,11 @@ class MainWindow(QMainWindow):
             QPushButton#B_Graficos {
                 background-color: #2563eb;
                 border-color: #1d4ed8;
+            }
+
+            QPushButton#B_Fundamentales {
+                background-color: #0f766e;
+                border-color: #0f5f59;
             }
 
             QPushButton#B_Salir {
@@ -1939,6 +2035,9 @@ class MainWindow(QMainWindow):
         self.set_table_headers(DEFAULT_RESULT_HEADERS)
         for result in self.cumulative_results:
             self._add_result_to_table(result)
+        if (hasattr(self, "E_Fundamentales")
+                and self._results_view == "fundamentals"):
+            self.refresh_fundamentals_table()
 
     def on_configure_options(self):
         dialog = OptionsDialog(self.app_options, self)
@@ -2320,12 +2419,32 @@ class MainWindow(QMainWindow):
             self._display_company_info(ticker, details)
 
     def toggle_graphs_view(self):
-        self._graphs_view_active = not self._graphs_view_active
-        self.B_Graficos.setText("Tabla" if self._graphs_view_active else "Gráficos")
-        self.E_Resultados.setVisible(not self._graphs_view_active)
-        self._company_cards_scroll.setVisible(self._graphs_view_active)
-        if self._graphs_view_active:
+        self.set_results_view(
+            "analysis" if self._results_view == "graphs" else "graphs"
+        )
+
+    def toggle_fundamentals_view(self):
+        self.set_results_view(
+            "analysis" if self._results_view == "fundamentals" else "fundamentals"
+        )
+
+    def set_results_view(self, view):
+        if view not in {"analysis", "graphs", "fundamentals"}:
+            return
+        self._results_view = view
+        self.B_Graficos.setText("Análisis" if view == "graphs" else "Gráficos")
+        self.B_Fundamentales.setText(
+            "Análisis" if view == "fundamentals" else "Fundamentales"
+        )
+        self.E_Resultados.setVisible(view == "analysis")
+        self.E_Fundamentales.setVisible(view == "fundamentals")
+        self._company_cards_scroll.setVisible(view == "graphs")
+        for button in self._chart_period_buttons.buttons():
+            button.setVisible(view == "graphs")
+        if view == "graphs":
             self.refresh_company_cards()
+        elif view == "fundamentals":
+            self.refresh_fundamentals_table()
 
     def set_chart_interval(self, interval):
         if interval not in ("1d", "1wk", "1mo") or interval == self._chart_interval:
@@ -2334,8 +2453,145 @@ class MainWindow(QMainWindow):
         self._hide_company_info_popup()
         for button in self._chart_period_buttons.buttons():
             button.setChecked(button.text() == {"1d": "Diarias", "1wk": "Semanales", "1mo": "Mensuales"}[interval])
-        if self._graphs_view_active:
+        if self._results_view == "graphs":
             self.refresh_company_cards()
+
+    @staticmethod
+    def _format_fundamental_value(value, kind):
+        if kind == "text":
+            return str(value).strip() if value else "N/D"
+        currency = ""
+        if kind == "market_cap":
+            if isinstance(value, tuple):
+                value, currency = value
+            elif value is None:
+                return "N/D"
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "N/D"
+        if not np.isfinite(number):
+            return "N/D"
+        if kind == "percentage":
+            return f"{number * 100:.2f}%"
+        if kind == "ratio":
+            return f"{number:.2f}"
+        if kind == "debt":
+            return f"{number:.1f}%"
+        if kind == "market_cap":
+            scale = ""
+            for unit in ("", "K", "M", "B", "T"):
+                if abs(number) < 1000 or unit == "T":
+                    scale = unit
+                    break
+                number /= 1000
+            return f"{number:.2f} {scale} {currency}".strip()
+        return "N/D"
+
+    def _request_fundamental_data(self, ticker):
+        if (ticker in self._fundamental_info_cache
+                or ticker in self._fundamental_requested_tickers):
+            return
+        self._fundamental_requested_tickers.add(ticker)
+        self._fundamental_pending_tickers.append(ticker)
+        self._start_fundamental_data_thread()
+
+    def _start_fundamental_data_thread(self):
+        if self._fundamental_thread is not None or not self._fundamental_pending_tickers:
+            return
+        tickers = self._fundamental_pending_tickers
+        self._fundamental_pending_tickers = []
+        thread = FundamentalDataThread(tickers)
+        thread.data_ready.connect(self._on_fundamental_data_ready)
+        thread.finished.connect(
+            lambda worker=thread: self._on_fundamental_data_thread_finished(worker)
+        )
+        self._fundamental_thread = thread
+        thread.start()
+
+    def _on_fundamental_data_ready(self, ticker, metrics):
+        self._fundamental_requested_tickers.discard(ticker)
+        self._fundamental_info_cache[ticker] = metrics
+        if metrics.get("error"):
+            self.append_to_visor(
+                f"No se pudieron consultar los fundamentales de {ticker}: {metrics['error']}"
+            )
+        if self._results_view == "fundamentals":
+            self.refresh_fundamentals_table()
+
+    def _on_fundamental_data_thread_finished(self, worker):
+        if self._fundamental_thread is worker:
+            self._fundamental_thread = None
+        self._start_fundamental_data_thread()
+
+    def refresh_fundamentals_table(self):
+        if not hasattr(self, "E_Fundamentales"):
+            return
+        table = self.E_Fundamentales
+        table.setSortingEnabled(False)
+        table.setRowCount(0)
+        results = sorted(
+            (
+                result for result in self.cumulative_results
+                if int(result.get("Score", 0)) > MIN_SCORE_TO_DISPLAY
+            ),
+            key=lambda result: int(result.get("Score", 0)),
+            reverse=True,
+        )
+        fields = (
+            ("longName", "text"),
+            ("sector", "text"),
+            ("marketCap", "market_cap"),
+            ("trailingPE", "ratio"),
+            ("forwardPE", "ratio"),
+            ("priceToBook", "ratio"),
+            ("returnOnEquity", "percentage"),
+            ("profitMargins", "percentage"),
+            ("debtToEquity", "debt"),
+            ("revenueGrowth", "percentage"),
+            ("dividendYield", "percentage"),
+        )
+        for result in results:
+            ticker = str(result.get("Ticker", "")).strip()
+            if not ticker:
+                continue
+            metrics = self._fundamental_info_cache.get(ticker)
+            row = table.rowCount()
+            table.insertRow(row)
+
+            ticker_item = QTableWidgetItem(ticker)
+            ticker_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            table.setItem(row, 0, ticker_item)
+
+            if metrics is None:
+                rating, color = "Consultando", "#94a3b8"
+                tooltip = "Consultando datos fundamentales en Yahoo Finance."
+            elif metrics.get("error"):
+                rating, color = "Sin datos", "#94a3b8"
+                tooltip = f"No se pudieron consultar los datos: {metrics['error']}"
+            else:
+                rating, color, tooltip = rate_fundamentals(metrics)
+            indicator = QLabel()
+            indicator.setFixedSize(16, 16)
+            indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            indicator.setAccessibleName(rating)
+            indicator.setToolTip(tooltip)
+            indicator.setStyleSheet(
+                f"background-color: {color}; border-radius: 8px; border: 1px solid #64748b;"
+            )
+            table.setCellWidget(row, 1, indicator)
+
+            for column, (key, kind) in enumerate(fields, start=2):
+                value = metrics.get(key) if metrics and not metrics.get("error") else None
+                if kind == "market_cap":
+                    value = (value, metrics.get("currency") or "") if value is not None else None
+                item = QTableWidgetItem(self._format_fundamental_value(value, kind))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                table.setItem(row, column, item)
+            if metrics is None:
+                self._request_fundamental_data(ticker)
+        table.setSortingEnabled(True)
+        self.apply_signal_filter()
 
     def refresh_company_cards(self):
         while self._company_cards_layout.count():
@@ -2603,6 +2859,10 @@ class MainWindow(QMainWindow):
         self.analysis_show_current_results = show_current_results
         self.cumulative_results = []
         self.set_table_headers([])
+        if self._results_view == "fundamentals":
+            self.refresh_fundamentals_table()
+        elif self._results_view == "graphs":
+            self.refresh_company_cards()
         self.append_to_visor("Iniciando análisis...")
 
         self.B_Lista.setEnabled(False)
@@ -2683,8 +2943,10 @@ class MainWindow(QMainWindow):
     def on_analysis_result(self, result):
         self.cumulative_results.append(result)
         self._add_result_to_table(result)
-        if self._graphs_view_active:
+        if self._results_view == "graphs":
             self.refresh_company_cards()
+        elif self._results_view == "fundamentals":
+            self.refresh_fundamentals_table()
 
     def _add_result_to_table(self, result):
         if int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY:
@@ -2718,29 +2980,44 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "signal_filter_value") or not hasattr(self, "E_Resultados"):
             return
         selected = self.signal_filter_value
-        signal_col = next(
-            (col for col in range(self.E_Resultados.columnCount())
-             if (header := self.E_Resultados.horizontalHeaderItem(col))
-             and header.text().strip().lower() in {"signal", "señal"}),
-            None,
-        )
-        if signal_col is None:
-            return
-        for row in range(self.E_Resultados.rowCount()):
-            item = self.E_Resultados.item(row, signal_col)
-            signal = item.text().strip().upper() if item else ""
-            matches = (
-                selected == "todas"
-                or (selected == "comprar" and "COMPRA" in signal)
-                or (selected == "vender" and "VENTA" in signal)
-                or (selected == "esperar" and "ESPERA" in signal)
+        signal_by_ticker = {
+            str(result.get("Ticker", "")).strip(): str(result.get("Signal", "")).upper()
+            for result in self.cumulative_results
+        }
+        for table in (self.E_Resultados, getattr(self, "E_Fundamentales", None)):
+            if table is None:
+                continue
+            signal_col = next(
+                (col for col in range(table.columnCount())
+                 if (header := table.horizontalHeaderItem(col))
+                 and header.text().strip().lower() in {"signal", "señal"}),
+                None,
             )
-            self.E_Resultados.setRowHidden(row, not matches)
+            ticker_col = next(
+                (col for col in range(table.columnCount())
+                 if (header := table.horizontalHeaderItem(col))
+                 and header.text().strip().lower() == "ticker"),
+                None,
+            )
+            for row in range(table.rowCount()):
+                item = table.item(row, signal_col) if signal_col is not None else None
+                if item:
+                    signal = item.text().strip().upper()
+                else:
+                    ticker_item = table.item(row, ticker_col) if ticker_col is not None else None
+                    signal = signal_by_ticker.get(ticker_item.text().strip(), "") if ticker_item else ""
+                matches = (
+                    selected == "todas"
+                    or (selected == "comprar" and "COMPRA" in signal)
+                    or (selected == "vender" and "VENTA" in signal)
+                    or (selected == "esperar" and "ESPERA" in signal)
+                )
+                table.setRowHidden(row, not matches)
 
     def set_signal_filter(self, selected):
         self.signal_filter_value = selected
         self.apply_signal_filter()
-        if self._graphs_view_active:
+        if self._results_view == "graphs":
             self.refresh_company_cards()
 
     def _style_result_item(self, item, header, value):

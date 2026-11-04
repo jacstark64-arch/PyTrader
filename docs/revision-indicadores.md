@@ -55,6 +55,23 @@ Institucional junto a los resultados existentes. Electron obtiene las metricas
 en su resultado y la API web las serializa. Los motores consultan BPA TTM y el
 indice para el analisis; no se usa la beta precalculada de Yahoo.
 
+## Vista de fundamentales
+
+El boton **Fundamentales** de la aplicacion Python abre una tabla con empresa,
+sector, capitalizacion, PER, PER futuro, precio/libro, ROE, margen neto,
+deuda/patrimonio, crecimiento de ingresos y dividendo. Los datos se consultan
+en Yahoo Finance en segundo plano. El circulo de calidad se calcula con PER,
+ROE, margen neto, deuda/patrimonio y crecimiento de ingresos: cada indicador
+aporta +1, 0 o -1 segun estos umbrales orientativos: PER positivo hasta 25
+(+1), hasta 40 (0) y el resto (-1); ROE y margen neto desde 15% (+1), desde
+5% (0) y por debajo (-1); deuda/patrimonio hasta 100 (+1), hasta 200 (0) y
+fuera de ese rango (-1); crecimiento desde 8% (+1), desde 0% (0) y negativo
+(-1). Una media de al menos 0.4 es "Muy buena", desde -0.2 es "Buena" y por
+debajo es "Mala". Se necesitan al menos tres indicadores disponibles; de lo
+contrario se muestra gris como "Sin datos". La capitalizacion, PER futuro,
+precio/libro y dividendos se muestran como contexto, pero no participan en
+esta puntuacion. No es una recomendacion de inversion.
+
 ## Correcciones adicionales
 
 - RSI: suavizado Wilder/RMA en los tres motores. Antes usaban medias simples;

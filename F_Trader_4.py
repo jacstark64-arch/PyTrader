@@ -1,6 +1,6 @@
 #***********************************************************
 #
-#              04/11/2026
+#            12/11/026
 #            Mi Screener V7
 #
 #***********************************************************
@@ -462,8 +462,11 @@ def rate_fundamentals(metrics):
         ("revenueGrowth", lambda value: 1 if value >= 0.08 else 0 if value >= 0 else -1),
     )
     for key, evaluate in factors:
+        raw_value = metrics.get(key)
+        if raw_value is None:
+            continue
         try:
-            value = float(metrics.get(key))
+            value = float(raw_value)
         except (TypeError, ValueError):
             continue
         if not np.isfinite(value):
@@ -471,16 +474,22 @@ def rate_fundamentals(metrics):
         score += evaluate(value)
         evaluated += 1
 
-    if evaluated < 3:
-        return "Sin datos", "#94a3b8", "No hay suficientes fundamentales para evaluar."
+    # Without a valid trailing P/E, the valuation misses one of its core
+    # inputs. Avoid showing a green/amber rating based only on other metrics.
+    try:
+        pe = float(metrics.get("trailingPE"))
+    except (TypeError, ValueError):
+        pe = np.nan
+    if evaluated < 3 or not np.isfinite(pe):
+        return "Sin datos", "#94a3b8", "Falta el PER o hay menos de tres fundamentales válidos."
 
     average = score / evaluated
     if average >= 0.4:
         label, color = "Muy buena", "#16a34a"
-    elif average >= -0.2:
-        label, color = "Buena", "#f59e0b"
+    elif average > -0.4:
+        label, color = "Mixta", "#f59e0b"
     else:
-        label, color = "Mala", "#dc2626"
+        label, color = "Débil", "#dc2626"
     explanation = (
         f"{label}: {score:+d} puntos de {evaluated} indicadores "
         "(PER, ROE, margen neto, deuda/patrimonio y crecimiento de ingresos). "
@@ -1552,6 +1561,10 @@ class MainWindow(QMainWindow):
         self.B_Borrar.setText("Borrar")
         self.B_Borrar.clicked.connect(self.on_b_clear_results)
         self.B_Salir.clicked.connect(self.close)
+        self.B_GenerarLista = QPushButton("Generar Lista", self.centralwidget)
+        self.B_GenerarLista.setObjectName("B_GenerarLista")
+        self.B_GenerarLista.setGeometry(1500, 860, 120, 35)
+        self.B_GenerarLista.clicked.connect(self.on_b_generar_lista)
         self._set_e_tiempo_text("15")
         self.C_Tiempo.setChecked(True)
         self.C_Tiempo.toggled.connect(self.on_c_tiempo_toggled)
@@ -3092,26 +3105,8 @@ class MainWindow(QMainWindow):
                 self._add_result_to_table(row)
                 result_keys.add(key)
 
-        try:
-            a_punto_path, a_punto_count = export_a_punto(self.cumulative_results)
-            self.append_to_visor(
-                f"A_Punto.txt creado: {a_punto_count} valores con Score > "
-                f"{A_PUNTO_MIN_SCORE} -> {a_punto_path}"
-            )
-        except (OSError, TypeError, ValueError) as exc:
-            self.append_to_visor(f"Error creando A_Punto.txt: {exc}")
-
         if not results and not self.cumulative_results:
             self.append_to_visor("No se generaron resultados.")
-            if EXPORT_EXCEL:
-                empty_export_path = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
-                try:
-                    empty_export_path.write_text("", encoding="utf-8")
-                    self.append_to_visor(
-                        f"Lista TradingView exportada: {empty_export_path} (sin resultados)"
-                    )
-                except (OSError, TypeError, ValueError) as exc:
-                    self.append_to_visor(f"Error exportando lista .txt: {exc}")
             return
 
         if not self.cumulative_results:
@@ -3130,104 +3125,6 @@ class MainWindow(QMainWindow):
                 f"No hay resultados con Score superior a {MIN_SCORE_TO_DISPLAY}."
             )
 
-        if EXPORT_EXCEL:
-            export_df = pd.DataFrame(self.cumulative_results)
-            if export_df.empty:
-                self.append_to_visor("No hay resultados exportables para la lista TradingView.")
-                return
-            try:
-                # Construir archivo .txt en formato compatible con TradingView
-                tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
-
-                # Mapa inverso: sufijo -> mercado (códigos usados para TradingView)
-                suffix_to_exchange = {
-                    ".MC": "BME",
-                    ".PA": "EPA",
-                    ".L": "LON",
-                    ".DE": "XETR",
-                    ".F": "FRA",
-                    ".AS": "AMS",
-                    ".MI": "MIL",
-                    ".HE": "HEL",
-                    ".ST": "STO",
-                    ".SW": "SWX",
-                    ".OL": "OSL",
-                    ".CO": "CPH",
-                    ".BR": "BRU",
-                    ".LS": "LIS",
-                    ".VI": "VIE",
-                    ".AX": "ASX",
-                }
-
-                # Mapear mercado -> continente (nombres en español)
-                europe = {
-                    "BME",
-                    "EPA",
-                    "LON",
-                    "XETR",
-                    "FRA",
-                    "AMS",
-                    "MIL",
-                    "HEL",
-                    "STO",
-                    "SWX",
-                    "OSL",
-                    "CPH",
-                    "BRU",
-                    "LIS",
-                    "VIE",
-                }
-                america = {"NASDAQ", "NYSE", "AMEX", "ARCA", "CBOE"}
-
-                groups = {}
-
-                def to_tv_notation(ticker):
-                    # Si ya viene con Exchange:Ticker, mantener tal cual
-                    if ":" in ticker:
-                        exch, sym = ticker.split(":", 1)
-                        return f"{exch}:{sym}"
-                    # Si viene con sufijo tipo TICKER.SUF, mapear sufijo
-                    if "." in ticker:
-                        base, suf = ticker.split(".", 1)
-                        suf = "." + suf
-                        exch = suffix_to_exchange.get(suf)
-                        if exch:
-                            return f"{exch}:{base}"
-                        return ticker
-                    # Por defecto asumimos NASDAQ para símbolos sin sufijo
-                    return f"NASDAQ:{ticker}"
-
-                def continent_for_exchange(exch_code):
-                    if exch_code in europe:
-                        return "Europa"
-                    if exch_code in america:
-                        return "America"
-                    # Fall back genérico
-                    return "Global"
-
-                for row in self.cumulative_results:
-                    tk = str(row.get("Ticker", "")).strip()
-                    if not tk:
-                        continue
-                    tv = to_tv_notation(tk)
-                    # extraer exchange para asignar continente
-                    if ":" in tv:
-                        exch = tv.split(":", 1)[0]
-                    else:
-                        exch = ""
-                    continent = continent_for_exchange(exch)
-                    groups.setdefault(continent, []).append(tv)
-
-                # Escribir un bloque por continente: ###Continente,ticker1,ticker2,...
-                with open(tv_file, "w", encoding="utf-8") as f:
-                    for continent, items in groups.items():
-                        line = "###" + continent + "," + ",".join(items)
-                        f.write(line + "\n")
-
-                self.append_to_visor(f"Lista TradingView exportada: {tv_file}")
-            except (OSError, TypeError, ValueError) as exc:
-                self.append_to_visor(f"Error exportando lista .txt: {exc}")
-
         high_score_results = [
             row for row in sorted_results if int(row.get("Score", 0)) >= EMAIL_MIN_SCORE
         ]
@@ -3241,6 +3138,53 @@ class MainWindow(QMainWindow):
                 )
         except Exception as exc:
             self.append_to_visor(f"Error enviando correo: {exc}")
+
+    def on_b_generar_lista(self):
+        """Exporta los resultados que permanecen visibles con el filtro actual."""
+        if not EXPORT_EXCEL:
+            self.append_to_visor("La exportación de listas está desactivada en la configuración.")
+            return
+        ticker_column = next((col for col in range(self.E_Resultados.columnCount())
+                              if self.E_Resultados.horizontalHeaderItem(col)
+                              and self.E_Resultados.horizontalHeaderItem(col).text().strip().lower() == "ticker"), None)
+        if ticker_column is None:
+            self.append_to_visor("No se encontró la columna Ticker.")
+            return
+        visible_tickers = {
+            self.E_Resultados.item(row, ticker_column).text().strip()
+            for row in range(self.E_Resultados.rowCount())
+            if not self.E_Resultados.isRowHidden(row) and self.E_Resultados.item(row, ticker_column)
+        }
+        selected_results = [row for row in self.cumulative_results
+                            if str(row.get("Ticker", "")).strip() in visible_tickers]
+        if not selected_results:
+            self.append_to_visor("No hay resultados visibles para exportar.")
+            return
+        tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
+        suffix_to_exchange = {".MC": "BME", ".PA": "EPA", ".L": "LON", ".DE": "XETR", ".F": "FRA", ".AS": "AMS", ".MI": "MIL", ".HE": "HEL", ".ST": "STO", ".SW": "SWX", ".OL": "OSL", ".CO": "CPH", ".BR": "BRU", ".LS": "LIS", ".VI": "VIE", ".AX": "ASX"}
+        europe = {"BME", "EPA", "LON", "XETR", "FRA", "AMS", "MIL", "HEL", "STO", "SWX", "OSL", "CPH", "BRU", "LIS", "VIE"}
+        america = {"NASDAQ", "NYSE", "AMEX", "ARCA", "CBOE"}
+        groups = {}
+        for row in selected_results:
+            ticker = str(row.get("Ticker", "")).strip()
+            if not ticker:
+                continue
+            if ":" in ticker:
+                tv = ticker
+            elif "." in ticker and (exchange := suffix_to_exchange.get("." + ticker.split(".", 1)[1])):
+                tv = f"{exchange}:{ticker.split('.', 1)[0]}"
+            else:
+                tv = f"NASDAQ:{ticker}" if "." not in ticker else ticker
+            exch = tv.split(":", 1)[0] if ":" in tv else ""
+            continent = "Europa" if exch in europe else "America" if exch in america else "Global"
+            groups.setdefault(continent, []).append(tv)
+        try:
+            with open(tv_file, "w", encoding="utf-8") as file:
+                for continent, items in groups.items():
+                    file.write("###" + continent + "," + ",".join(items) + "\n")
+            self.append_to_visor(f"Lista TradingView exportada ({len(visible_tickers)} valores visibles): {tv_file}")
+        except (OSError, TypeError, ValueError) as exc:
+            self.append_to_visor(f"Error exportando lista .txt: {exc}")
 
     def on_analysis_error(self, message):
         self.append_to_visor(message)

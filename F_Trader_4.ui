@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Mi Screener V7.5     12/11/2026</string>
+   <string>Mi Screener V7.5    12/11/2026</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <widget class="QProgressBar" name="P_MercadoEuropeo">
@@ -136,9 +136,9 @@
    <widget class="QGroupBox" name="G_Ticker">
     <property name="geometry">
      <rect>
-      <x>20</x>
-      <y>450</y>
-      <width>201</width>
+      <x>30</x>
+      <y>420</y>
+      <width>191</width>
       <height>80</height>
      </rect>
     </property>
@@ -172,7 +172,7 @@
      <property name="geometry">
       <rect>
        <x>20</x>
-       <y>30</y>
+       <y>33</y>
        <width>61</width>
        <height>31</height>
       </rect>
@@ -182,10 +182,10 @@
    <widget class="QGroupBox" name="G_Lista">
     <property name="geometry">
      <rect>
-      <x>20</x>
-      <y>540</y>
-      <width>461</width>
-      <height>71</height>
+      <x>30</x>
+      <y>520</y>
+      <width>441</width>
+      <height>81</height>
      </rect>
     </property>
     <property name="font">
@@ -201,7 +201,7 @@
       <rect>
        <x>90</x>
        <y>30</y>
-       <width>351</width>
+       <width>321</width>
        <height>31</height>
       </rect>
      </property>
@@ -247,8 +247,8 @@
     <property name="geometry">
      <rect>
       <x>20</x>
-      <y>620</y>
-      <width>461</width>
+      <y>619</y>
+      <width>451</width>
       <height>221</height>
      </rect>
     </property>
@@ -265,8 +265,8 @@
       <rect>
        <x>10</x>
        <y>30</y>
-       <width>431</width>
-       <height>171</height>
+       <width>411</width>
+       <height>181</height>
       </rect>
      </property>
     </widget>
@@ -348,10 +348,15 @@
     <property name="geometry">
      <rect>
       <x>230</x>
-      <y>450</y>
-      <width>251</width>
+      <y>420</y>
+      <width>241</width>
       <height>80</height>
      </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>10</pointsize>
+     </font>
     </property>
     <property name="title">
      <string>LOOP</string>
@@ -359,8 +364,8 @@
     <widget class="QCheckBox" name="C_Tiempo">
      <property name="geometry">
       <rect>
-       <x>20</x>
-       <y>38</y>
+       <x>10</x>
+       <y>40</y>
        <width>21</width>
        <height>21</height>
       </rect>
@@ -372,9 +377,9 @@
     <widget class="QTextEdit" name="E_Tiempo">
      <property name="geometry">
       <rect>
-       <x>40</x>
+       <x>30</x>
        <y>30</y>
-       <width>41</width>
+       <width>51</width>
        <height>31</height>
       </rect>
      </property>
@@ -400,10 +405,10 @@
     <widget class="QLCDNumber" name="lcd_Loop">
      <property name="geometry">
       <rect>
-       <x>159</x>
-       <y>24</y>
-       <width>81</width>
-       <height>41</height>
+       <x>150</x>
+       <y>30</y>
+       <width>72</width>
+       <height>35</height>
       </rect>
      </property>
      <property name="digitCount">

@@ -1,7 +1,7 @@
 #***********************************************************
 #
-#            12/11/026
-#            Mi Screener V7.5
+#            13/11/026
+#            Mi Screener V7.6
 #
 #***********************************************************
 import sys
@@ -1486,10 +1486,6 @@ class MainWindow(QMainWindow):
         self.apply_visual_style()
         self.settings = QSettings("PyTrader", "PyTrader")
         self.app_options = self.load_app_options()
-        # Migrar instalaciones existentes: la preferencia guardada podía seguir
-        # desactivando la exportación aunque el valor predeterminado ya estuviera activo.
-        self.app_options["export_excel"] = True
-        self.save_app_options(self.app_options)
         self.apply_app_options(self.app_options, save=False)
         self.setup_options_menu()
 

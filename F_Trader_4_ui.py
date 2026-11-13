@@ -138,7 +138,7 @@ class Ui_MainWindow(object):
         self.lcd_Loop = QLCDNumber(self.G_Tiempo)
         self.lcd_Loop.setObjectName(u"lcd_Loop")
         self.lcd_Loop.setGeometry(QRect(188, 30, 72, 35))
-        self.lcd_Loop.setDigitCount(8)
+        self.lcd_Loop.setDigitCount(4)
         self.lcd_Reloj = QLCDNumber(self.centralwidget)
         self.lcd_Reloj.setObjectName(u"lcd_Reloj")
         self.lcd_Reloj.setGeometry(QRect(1700, 0, 161, 51))

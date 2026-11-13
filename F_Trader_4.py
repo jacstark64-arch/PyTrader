@@ -1669,7 +1669,7 @@ class MainWindow(QMainWindow):
         self._loop_market_close_handled = False
         self.lcd_Reloj.setDigitCount(8)
         if hasattr(self, "lcd_Loop"):
-            self.lcd_Loop.setDigitCount(8)
+            self.lcd_Loop.setDigitCount(4)
         self.set_table_headers([])
         self.update_lcd_reloj()
         self.update_market_progress_bars()
@@ -2286,10 +2286,7 @@ class MainWindow(QMainWindow):
 
     def _format_countdown(self, milliseconds):
         total_seconds = max(0, (milliseconds + 999) // 1000)
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return str((total_seconds + 59) // 60)
 
     def update_lcd_reloj(self):
         self.update_market_progress_bars()
@@ -2312,10 +2309,10 @@ class MainWindow(QMainWindow):
             if remaining > 0:
                 loop_lcd.display(self._format_countdown(remaining))
             else:
-                loop_lcd.display("00:00:00")
+                loop_lcd.display(0)
             return
 
-        loop_lcd.display("00:00:00")
+        loop_lcd.display(0)
 
     def _load_folder_tickers(self, folder_path, log_files=False):
         txt_files = sorted(Path(folder_path).glob("*.txt"))

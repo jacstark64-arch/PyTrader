@@ -7,6 +7,7 @@
 import sys
 import time
 import os
+import csv
 import smtplib
 from datetime import datetime, time as dt_time
 from email.message import EmailMessage
@@ -1458,6 +1459,31 @@ def export_unanalyzed_tickers(tickers, filename=FAILED_TICKERS_FILE):
     output_path = output_file_path(filename)
     output_path.write_text("\n".join(values) + ("\n" if values else ""), encoding="utf-8")
     return output_path, len(values)
+
+
+def export_analysis_results(results):
+    """Guarda cada ejecución terminada en un CSV independiente y no sobrescribe."""
+    output_dir = Path(RESULTS_DIR)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name = f"Analisis_{stamp}"
+    output_path = output_dir / f"{base_name}.csv"
+    suffix = 2
+    while output_path.exists():
+        output_path = output_dir / f"{base_name}_{suffix}.csv"
+        suffix += 1
+
+    columns = list(results[0].keys()) if results else [
+        "Ticker", "Precio", "Signal", "Score", "Trend", "CFI Diario",
+        "CFI Semanal", "Flow", "Smart Money", "RSI", "RSI Vol.",
+        "Momentum", "MACD", "PER", "ADX", "VWMA", "Riesgo %", "Beta",
+        "Dif. %", "Entrada Institucional", "VWAP", "Vol Relativo", "Fecha",
+    ]
+    with output_path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(results)
+    return output_path
 
 
 def output_file_path(filename):
@@ -3072,6 +3098,13 @@ class MainWindow(QMainWindow):
 
     def on_analysis_finished(self, results):
         self.append_to_visor("Análisis finalizado.")
+        try:
+            analysis_path = export_analysis_results(results)
+            self.append_to_visor(
+                f"Análisis guardado ({len(results)} resultados): {analysis_path}"
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            self.append_to_visor(f"Error guardando el análisis: {exc}")
         self.B_Lista.setEnabled(True)
         self.B_Carpeta.setEnabled(True)
         self.B_Ticker.setEnabled(True)

@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Mi Screener V7.6    13/11/2026</string>
+   <string>Mi Screener V7.6    17/11/2026</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <widget class="QProgressBar" name="P_MercadoEuropeo">
@@ -406,7 +406,7 @@
      <property name="geometry">
       <rect>
        <x>158</x>
-       <y>25</y>
+       <y>30</y>
        <width>72</width>
        <height>38</height>
       </rect>

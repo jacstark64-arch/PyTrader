@@ -102,7 +102,7 @@ ADX_THRESHOLD = 25
 ADX_WEIGHT = 5
 VWAP_WEIGHT = 5
 
-EXPORT_EXCEL = False
+EXPORT_EXCEL = True
 EXCEL_NAME = "SmartMoney_Screener.xlsx"
 APP_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = APP_DIR / "resultados"
@@ -1486,6 +1486,11 @@ class MainWindow(QMainWindow):
         self.apply_visual_style()
         self.settings = QSettings("PyTrader", "PyTrader")
         self.app_options = self.load_app_options()
+        # Migrar instalaciones existentes: una preferencia guardada podía seguir
+        # desactivando la exportación de listas aunque el valor predeterminado
+        # ya estuviera activo.
+        self.app_options["export_excel"] = True
+        self.save_app_options(self.app_options)
         self.apply_app_options(self.app_options, save=False)
         self.setup_options_menu()
 

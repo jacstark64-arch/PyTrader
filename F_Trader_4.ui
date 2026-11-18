@@ -449,7 +449,7 @@
      </property>
      <property name="font">
       <font>
-       <pointsize>12</pointsize>
+       <pointsize>11</pointsize>
       </font>
      </property>
      <property name="text">
@@ -459,9 +459,9 @@
     <widget class="QLCDNumber" name="lcd_Loop">
      <property name="geometry">
       <rect>
-       <x>164</x>
+       <x>167</x>
        <y>30</y>
-       <width>72</width>
+       <width>70</width>
        <height>38</height>
       </rect>
      </property>

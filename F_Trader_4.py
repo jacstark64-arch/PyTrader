@@ -1590,7 +1590,7 @@ class MainWindow(QMainWindow):
         self.E_Resultados.viewport().installEventFilter(self)
         self.E_Fundamentales = QTableWidget(self.G_Resultados)
         self.E_Fundamentales.setObjectName("E_Fundamentales")
-        self.E_Fundamentales.setGeometry(10, 65, 1271, 640)
+        self._resize_fundamentals_table()
         self.E_Fundamentales.setColumnCount(13)
         self.E_Fundamentales.setHorizontalHeaderLabels([
             "Ticker", "Semáforo", "Empresa", "Sector", "Capitalización",
@@ -2456,6 +2456,7 @@ class MainWindow(QMainWindow):
             "Análisis" if view == "fundamentals" else "Fundamentales"
         )
         self.E_Resultados.setVisible(view == "analysis")
+        self._resize_fundamentals_table()
         self.E_Fundamentales.setVisible(view == "fundamentals")
         self._company_cards_scroll.setVisible(view == "graphs")
         for button in self._chart_period_buttons.buttons():
@@ -2464,6 +2465,17 @@ class MainWindow(QMainWindow):
             self.refresh_company_cards()
         elif view == "fundamentals":
             self.refresh_fundamentals_table()
+
+    def _resize_fundamentals_table(self):
+        """Use the available results-module area without crossing its edges."""
+        if not hasattr(self, "E_Fundamentales"):
+            return
+        margin_x = 10
+        top = 65
+        bottom_margin = 20
+        width = max(1, self.G_Resultados.width() - 2 * margin_x)
+        height = max(1, self.G_Resultados.height() - top - bottom_margin)
+        self.E_Fundamentales.setGeometry(margin_x, top, width, height)
 
     def set_chart_interval(self, interval):
         if interval not in ("1d", "1wk", "1mo") or interval == self._chart_interval:

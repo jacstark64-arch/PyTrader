@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Mi Screener V7.8    17/11/2026</string>
+   <string>Mi Screener V9    18/11/2026</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <widget class="QProgressBar" name="P_MercadoEuropeo">
@@ -136,8 +136,8 @@
    <widget class="QGroupBox" name="G_Ticker">
     <property name="geometry">
      <rect>
-      <x>30</x>
-      <y>420</y>
+      <x>40</x>
+      <y>115</y>
       <width>191</width>
       <height>80</height>
      </rect>
@@ -182,10 +182,10 @@
    <widget class="QGroupBox" name="G_Lista">
     <property name="geometry">
      <rect>
-      <x>30</x>
-      <y>520</y>
+      <x>40</x>
+      <y>221</y>
       <width>441</width>
-      <height>81</height>
+      <height>131</height>
      </rect>
     </property>
     <property name="font">
@@ -242,14 +242,68 @@
       <string>Dir</string>
      </property>
     </widget>
+    <widget class="QPushButton" name="B_Bajadas">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>80</y>
+       <width>125</width>
+       <height>35</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Bajadas</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="B_Subidas">
+     <property name="geometry">
+      <rect>
+       <x>307</x>
+       <y>80</y>
+       <width>125</width>
+       <height>35</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Subidas</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="B_Analizar">
+     <property name="geometry">
+      <rect>
+       <x>160</x>
+       <y>80</y>
+       <width>125</width>
+       <height>35</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Analizar</string>
+     </property>
+    </widget>
    </widget>
    <widget class="QGroupBox" name="G_Analisis">
     <property name="geometry">
      <rect>
-      <x>20</x>
-      <y>619</y>
+      <x>30</x>
+      <y>370</y>
       <width>451</width>
-      <height>221</height>
+      <height>471</height>
      </rect>
     </property>
     <property name="font">
@@ -266,7 +320,7 @@
        <x>10</x>
        <y>30</y>
        <width>431</width>
-       <height>181</height>
+       <height>431</height>
       </rect>
      </property>
     </widget>
@@ -347,8 +401,8 @@
    <widget class="QGroupBox" name="G_Tiempo">
     <property name="geometry">
      <rect>
-      <x>230</x>
-      <y>420</y>
+      <x>240</x>
+      <y>115</y>
       <width>241</width>
       <height>80</height>
      </rect>
@@ -387,8 +441,8 @@
     <widget class="QLabel" name="L_Tiempo">
      <property name="geometry">
       <rect>
-       <x>90</x>
-       <y>39</y>
+       <x>87</x>
+       <y>38</y>
        <width>60</width>
        <height>17</height>
       </rect>

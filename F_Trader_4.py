@@ -1160,9 +1160,10 @@ class AnalysisThread(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, tickers):
+    def __init__(self, tickers, analysis_mode="normal"):
         super().__init__()
         self.tickers = tickers
+        self.analysis_mode = analysis_mode
         self.failed_tickers = []
         self._stop_requested = False
 
@@ -1219,9 +1220,15 @@ class AnalysisThread(QThread):
                     },
                 )
                 last = stock_data.iloc[-1]
+                rolling_high = float(stock_data["High"].max())
+                rolling_low = float(stock_data["Low"].min())
+                at_52_week_high = float(last["High"]) >= rolling_high * (1 - 1e-8)
+                at_52_week_low = float(last["Low"]) <= rolling_low * (1 + 1e-8)
                 result = {
                     "Ticker": ticker,
                     "Precio": round(float(last["Close"]), 2),
+                    "Máximo 52 semanas": "SI" if at_52_week_high else "NO",
+                    "Mínimo 52 semanas": "SI" if at_52_week_low else "NO",
                     "Signal": str(last["signal"]),
                     "Score": round(float(last["score"])),
                     "Trend": "SI" if last["trend_up"] else "NO",
@@ -1560,6 +1567,9 @@ class MainWindow(QMainWindow):
         self.B_Lista.clicked.connect(self.on_b_lista)
         self.B_Carpeta.clicked.connect(self.on_b_carpeta)
         self.B_Ticker.clicked.connect(self.on_b_analizar)
+        self.B_Bajadas.clicked.connect(lambda: self.start_selected_analysis("low"))
+        self.B_Subidas.clicked.connect(lambda: self.start_selected_analysis("high"))
+        self.B_Analizar.clicked.connect(lambda: self.start_selected_analysis("normal"))
         self.B_Cancelar.clicked.connect(self.on_b_cancelar)
         self._chart_interval = "1d"
         self._chart_period_buttons = QButtonGroup(self.G_Resultados)
@@ -1697,6 +1707,7 @@ class MainWindow(QMainWindow):
         self.analysis_clear_results = False
         self.analysis_replace_results = False
         self.analysis_show_current_results = False
+        self.analysis_mode = "normal"
         self._loop_market_close_handled = False
         self.lcd_Reloj.setDigitCount(8)
         if hasattr(self, "lcd_Loop"):
@@ -2802,6 +2813,20 @@ class MainWindow(QMainWindow):
         self._set_loop_source("files", file_paths)
         self.current_tickers = tickers
         self.clear_ticker_input()
+        self.append_to_visor("Lista cargada. Elige Subidas, Bajadas o Analizar.")
+
+    def start_selected_analysis(self, mode):
+        if self.analysis_thread and self.analysis_thread.isRunning():
+            QMessageBox.warning(self, "Proceso en curso", "Ya hay un análisis en curso. Cancela antes de iniciar otro.")
+            return
+        tickers = list(self.current_tickers) or self.parse_tickers_from_model()
+        if not tickers:
+            QMessageBox.warning(self, "Sin tickers", "Selecciona una lista o introduce tickers antes de analizar.")
+            return
+        self.current_tickers = tickers
+        self.analysis_mode = mode
+        titles = {"high": "Grandes Subidas", "low": "Grandes Bajadas", "normal": "Empresas Analizadas"}
+        self.G_Analisis.setTitle(titles[mode])
         self.start_analysis(tickers, clear_results=False)
 
     def get_selected_tracker(self):
@@ -2878,6 +2903,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Sin tickers", "No hay tickers en E_Ticker para analizar.")
             return
 
+        self.analysis_mode = "normal"
+        self.G_Analisis.setTitle("Empresas Analizadas")
         self.append_to_visor(f"Iniciando análisis para {len(tickers)} tickers...")
         self.clear_ticker_input()
         self.start_analysis(
@@ -2912,7 +2939,7 @@ class MainWindow(QMainWindow):
         self.B_Cancelar.setEnabled(True)
         self.B_Reiniciar.setEnabled(False)
 
-        self.analysis_thread = AnalysisThread(tickers)
+        self.analysis_thread = AnalysisThread(tickers, self.analysis_mode)
         self.analysis_thread.progress.connect(self.append_to_visor)
         self.analysis_thread.result_ready.connect(self.on_analysis_result)
         self.analysis_thread.finished.connect(self.on_analysis_finished)
@@ -2982,6 +3009,10 @@ class MainWindow(QMainWindow):
         self._open_chart_dialogs.append(dialog)
 
     def on_analysis_result(self, result):
+        if self.analysis_mode == "high" and result.get("Máximo 52 semanas") != "SI":
+            return
+        if self.analysis_mode == "low" and result.get("Mínimo 52 semanas") != "SI":
+            return
         self.cumulative_results.append(result)
         self._add_result_to_table(result)
         if self._results_view == "graphs":
@@ -3102,6 +3133,10 @@ class MainWindow(QMainWindow):
                 item.setForeground(QBrush(QColor("#8a2f2f")))
 
     def on_analysis_finished(self, results):
+        if self.analysis_mode == "high":
+            results = [row for row in results if row.get("Máximo 52 semanas") == "SI"]
+        elif self.analysis_mode == "low":
+            results = [row for row in results if row.get("Mínimo 52 semanas") == "SI"]
         self.append_to_visor("Análisis finalizado.")
         try:
             analysis_path = export_analysis_results(results)
@@ -3314,7 +3349,7 @@ class MainWindow(QMainWindow):
         self._set_loop_source("folder", folder_path)
         self.current_tickers = unique_tickers
         self.clear_ticker_input()
-        self.start_analysis(unique_tickers, clear_results=False)
+        self.append_to_visor("Lista cargada. Elige Subidas, Bajadas o Analizar.")
 
     def on_b_clear_results(self):
         self.cumulative_results = []

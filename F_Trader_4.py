@@ -148,6 +148,8 @@ MIN_SCORE_TO_DISPLAY = 60
 DEFAULT_RESULT_HEADERS = [
     "Ticker",
     "Precio",
+    "Máximo 52 semanas",
+    "Mínimo 52 semanas",
     "Signal",
     "Score",
     "Trend",
@@ -3000,9 +3002,15 @@ class MainWindow(QMainWindow):
         if int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY:
             return
 
-        columns = list(result.keys())
         if self.E_Resultados.columnCount() == 0:
-            self.set_table_headers(columns)
+            self.set_table_headers(DEFAULT_RESULT_HEADERS)
+        # La tabla puede tener ya sus encabezados predeterminados (por ejemplo,
+        # tras restaurar resultados). Escribir por el orden del diccionario
+        # desplaza los valores cuando ese orden no coincide con los encabezados.
+        columns = [
+            self.E_Resultados.horizontalHeaderItem(index).text()
+            for index in range(self.E_Resultados.columnCount())
+        ]
 
         self.E_Resultados.setSortingEnabled(False)
         row_idx = self.E_Resultados.rowCount()

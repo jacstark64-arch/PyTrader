@@ -3000,9 +3000,18 @@ class MainWindow(QMainWindow):
         if int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY:
             return
 
-        columns = list(result.keys())
         if self.E_Resultados.columnCount() == 0:
-            self.set_table_headers(columns)
+            self.set_table_headers(DEFAULT_RESULT_HEADERS)
+
+        # Los resultados pueden incluir campos auxiliares (por ejemplo,
+        # Máximo/Mínimo 52 semanas) que no se muestran como columnas. Leer
+        # siempre cada celda por el nombre del encabezado evita desplazar
+        # los valores cuando cambia el orden o el contenido del diccionario.
+        columns = [
+            self.E_Resultados.horizontalHeaderItem(col).text()
+            if self.E_Resultados.horizontalHeaderItem(col) else ""
+            for col in range(self.E_Resultados.columnCount())
+        ]
 
         self.E_Resultados.setSortingEnabled(False)
         row_idx = self.E_Resultados.rowCount()
@@ -3021,7 +3030,8 @@ class MainWindow(QMainWindow):
             self._style_result_item(item, header, value)
             self.E_Resultados.setItem(row_idx, col_idx, item)
         self.E_Resultados.setSortingEnabled(True)
-        self.E_Resultados.sortItems(columns.index("Score"), Qt.SortOrder.DescendingOrder)
+        if "Score" in columns:
+            self.E_Resultados.sortItems(columns.index("Score"), Qt.SortOrder.DescendingOrder)
         self.apply_signal_filter()
 
     def apply_signal_filter(self, *_args):

@@ -374,8 +374,16 @@ def build_tradingview_symbol(ticker):
             symbol = ticker[: -len(suffix)]
             return f"{exchange}:{symbol}"
 
-    # Sin sufijo de mercado -> se asume mercado estadounidense (NASDAQ por defecto)
-    return f"NASDAQ:{ticker}"
+    # Un ticker estadounidense sin mercado no permite deducir NASDAQ o NYSE.
+    # TradingView acepta símbolos sin prefijo, y así evitamos inventar una bolsa.
+    return ticker
+
+
+def tradingview_symbol_for_result(ticker):
+    """Construye el símbolo TV usando la notación de entrada si sigue disponible."""
+    normalized = str(ticker).strip().upper()
+    original = ORIGINAL_TICKER_MAP.get(normalized)
+    return build_tradingview_symbol(original or normalized)
 
 
 def normalize_ticker(ticker):
@@ -1438,9 +1446,7 @@ def export_a_punto(results, filename=A_PUNTO_FILE, min_score=A_PUNTO_MIN_SCORE):
             continue
 
         # Preferir la notacion original de la lista.
-        tv_symbol = ORIGINAL_TICKER_MAP.get(normalized, "")
-        if not tv_symbol:
-            tv_symbol = build_tradingview_symbol(normalized)
+        tv_symbol = tradingview_symbol_for_result(normalized)
 
         tv_symbol = tv_symbol.strip().upper()
         if tv_symbol and tv_symbol not in seen:
@@ -3223,15 +3229,9 @@ class MainWindow(QMainWindow):
             self.append_to_visor("No hay resultados visibles para exportar.")
             return
         tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
-        suffix_to_exchange = {".MC": "BME", ".PA": "EPA", ".L": "LON", ".DE": "XETR", ".F": "FRA", ".AS": "AMS", ".MI": "MIL", ".HE": "HEL", ".ST": "STO", ".SW": "SWX", ".OL": "OSL", ".CO": "CPH", ".BR": "BRU", ".LS": "LIS", ".VI": "VIE", ".AX": "ASX"}
         groups = {"Compra fuerte": [], "Compra": [], "Esperar": [], "Vender": []}
         for ticker, signal in visible_results:
-            if ":" in ticker:
-                tv = ticker
-            elif "." in ticker and (exchange := suffix_to_exchange.get("." + ticker.split(".", 1)[1])):
-                tv = f"{exchange}:{ticker.split('.', 1)[0]}"
-            else:
-                tv = f"NASDAQ:{ticker}" if "." not in ticker else ticker
+            tv = tradingview_symbol_for_result(ticker)
             normalized_signal = signal.strip().upper()
             heading = (
                 "Compra fuerte" if "COMPRA FUERTE" in normalized_signal else

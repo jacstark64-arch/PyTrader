@@ -3211,9 +3211,7 @@ class MainWindow(QMainWindow):
             return
         tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
         suffix_to_exchange = {".MC": "BME", ".PA": "EPA", ".L": "LON", ".DE": "XETR", ".F": "FRA", ".AS": "AMS", ".MI": "MIL", ".HE": "HEL", ".ST": "STO", ".SW": "SWX", ".OL": "OSL", ".CO": "CPH", ".BR": "BRU", ".LS": "LIS", ".VI": "VIE", ".AX": "ASX"}
-        europe = {"BME", "EPA", "LON", "XETR", "FRA", "AMS", "MIL", "HEL", "STO", "SWX", "OSL", "CPH", "BRU", "LIS", "VIE"}
-        america = {"NASDAQ", "NYSE", "AMEX", "ARCA", "CBOE"}
-        groups = {}
+        groups = {"Compra fuerte": [], "Compra": [], "Esperar": [], "Vender": []}
         for row in selected_results:
             ticker = str(row.get("Ticker", "")).strip()
             if not ticker:
@@ -3224,13 +3222,21 @@ class MainWindow(QMainWindow):
                 tv = f"{exchange}:{ticker.split('.', 1)[0]}"
             else:
                 tv = f"NASDAQ:{ticker}" if "." not in ticker else ticker
-            exch = tv.split(":", 1)[0] if ":" in tv else ""
-            continent = "Europa" if exch in europe else "America" if exch in america else "Global"
-            groups.setdefault(continent, []).append(tv)
+            signal = str(row.get("Signal", "")).strip().upper()
+            heading = (
+                "Compra fuerte" if "COMPRA FUERTE" in signal else
+                "Compra" if "COMPRA" in signal else
+                "Vender" if "VENTA" in signal or "VENDER" in signal else
+                "Esperar" if "ESPERA" in signal or "ESPERAR" in signal else
+                None
+            )
+            if heading:
+                groups[heading].append(tv)
         try:
             with open(tv_file, "w", encoding="utf-8") as file:
-                for continent, items in groups.items():
-                    file.write("###" + continent + "," + ",".join(items) + "\n")
+                for heading, items in groups.items():
+                    if items:
+                        file.write("###" + heading + "," + ",".join(items) + "\n")
             self.append_to_visor(f"Lista TradingView exportada ({len(visible_tickers)} valores visibles): {tv_file}")
         except (OSError, TypeError, ValueError) as exc:
             self.append_to_visor(f"Error exportando lista .txt: {exc}")

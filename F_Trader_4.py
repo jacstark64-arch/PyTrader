@@ -3193,45 +3193,61 @@ class MainWindow(QMainWindow):
         if not EXPORT_EXCEL:
             self.append_to_visor("La exportación de listas está desactivada en la configuración.")
             return
-        ticker_column = next((col for col in range(self.E_Resultados.columnCount())
-                              if self.E_Resultados.horizontalHeaderItem(col)
-                              and self.E_Resultados.horizontalHeaderItem(col).text().strip().lower() == "ticker"), None)
+        columns = {
+            self.E_Resultados.horizontalHeaderItem(col).text().strip().lower(): col
+            for col in range(self.E_Resultados.columnCount())
+            if self.E_Resultados.horizontalHeaderItem(col)
+        }
+        ticker_column = columns.get("ticker")
+        signal_column = columns.get("signal", columns.get("señal"))
         if ticker_column is None:
             self.append_to_visor("No se encontró la columna Ticker.")
             return
-        visible_tickers = {
-            self.E_Resultados.item(row, ticker_column).text().strip()
-            for row in range(self.E_Resultados.rowCount())
-            if not self.E_Resultados.isRowHidden(row) and self.E_Resultados.item(row, ticker_column)
-        }
-        selected_results = [row for row in self.cumulative_results
-                            if str(row.get("Ticker", "")).strip() in visible_tickers]
-        if not selected_results:
+        if signal_column is None:
+            self.append_to_visor("No se encontró la columna Signal/Señal.")
+            return
+
+        # Leer ticker y señal de la misma fila visible para respetar exactamente
+        # el filtro y los valores que muestra la tabla (incluido su orden actual).
+        visible_results = []
+        for row_idx in range(self.E_Resultados.rowCount()):
+            if self.E_Resultados.isRowHidden(row_idx):
+                continue
+            ticker_item = self.E_Resultados.item(row_idx, ticker_column)
+            signal_item = self.E_Resultados.item(row_idx, signal_column)
+            ticker = ticker_item.text().strip() if ticker_item else ""
+            signal = signal_item.text().strip() if signal_item else ""
+            if ticker and signal:
+                visible_results.append((ticker, signal))
+        if not visible_results:
             self.append_to_visor("No hay resultados visibles para exportar.")
             return
         tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
         suffix_to_exchange = {".MC": "BME", ".PA": "EPA", ".L": "LON", ".DE": "XETR", ".F": "FRA", ".AS": "AMS", ".MI": "MIL", ".HE": "HEL", ".ST": "STO", ".SW": "SWX", ".OL": "OSL", ".CO": "CPH", ".BR": "BRU", ".LS": "LIS", ".VI": "VIE", ".AX": "ASX"}
-        europe = {"BME", "EPA", "LON", "XETR", "FRA", "AMS", "MIL", "HEL", "STO", "SWX", "OSL", "CPH", "BRU", "LIS", "VIE"}
-        america = {"NASDAQ", "NYSE", "AMEX", "ARCA", "CBOE"}
-        groups = {}
-        for row in selected_results:
-            ticker = str(row.get("Ticker", "")).strip()
-            if not ticker:
-                continue
+        groups = {"Compra fuerte": [], "Compra": [], "Esperar": [], "Vender": []}
+        for ticker, signal in visible_results:
             if ":" in ticker:
                 tv = ticker
             elif "." in ticker and (exchange := suffix_to_exchange.get("." + ticker.split(".", 1)[1])):
                 tv = f"{exchange}:{ticker.split('.', 1)[0]}"
             else:
                 tv = f"NASDAQ:{ticker}" if "." not in ticker else ticker
-            exch = tv.split(":", 1)[0] if ":" in tv else ""
-            continent = "Europa" if exch in europe else "America" if exch in america else "Global"
-            groups.setdefault(continent, []).append(tv)
+            normalized_signal = signal.strip().upper()
+            heading = (
+                "Compra fuerte" if "COMPRA FUERTE" in normalized_signal else
+                "Compra" if "COMPRA" in normalized_signal else
+                "Esperar" if "ESPERA" in normalized_signal or "ESPERAR" in normalized_signal else
+                "Vender" if "VENTA" in normalized_signal or "VENDER" in normalized_signal else
+                None
+            )
+            if heading:
+                groups[heading].append(tv)
         try:
             with open(tv_file, "w", encoding="utf-8") as file:
-                for continent, items in groups.items():
-                    file.write("###" + continent + "," + ",".join(items) + "\n")
-            self.append_to_visor(f"Lista TradingView exportada ({len(visible_tickers)} valores visibles): {tv_file}")
+                for heading, items in groups.items():
+                    if items:
+                        file.write("###" + heading + "," + ",".join(items) + "\n")
+            self.append_to_visor(f"Lista TradingView exportada ({len(visible_results)} valores visibles): {tv_file}")
         except (OSError, TypeError, ValueError) as exc:
             self.append_to_visor(f"Error exportando lista .txt: {exc}")
 

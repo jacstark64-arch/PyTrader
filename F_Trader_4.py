@@ -102,8 +102,6 @@ ADX_THRESHOLD = 25
 ADX_WEIGHT = 5
 VWAP_WEIGHT = 5
 
-EXPORT_EXCEL = False
-EXCEL_NAME = "SmartMoney_Screener.xlsx"
 APP_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = APP_DIR / "resultados"
 
@@ -145,6 +143,7 @@ UI_FILE = resource_path("F_Trader_4.ui")
 DELAY_BETWEEN_REQUESTS = 1
 TXT_FILE = "Mi_Lista.txt"
 MIN_SCORE_TO_DISPLAY = 60
+MIN_MAX_WEEKS = 52
 DEFAULT_RESULT_HEADERS = [
     "Ticker",
     "Precio",
@@ -171,7 +170,7 @@ DEFAULT_RESULT_HEADERS = [
     "Fecha",
 ]
 EMAIL_RESULTS_TO = "titogilito64@gmail.com"
-EMAIL_MIN_SCORE = 80
+EMAIL_MIN_SCORE = MIN_SCORE_TO_DISPLAY
 SMTP_HOST = os.getenv("PYTRADER_SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("PYTRADER_SMTP_PORT", "587"))
 SMTP_USER = os.getenv("PYTRADER_SMTP_USER", "")
@@ -189,11 +188,9 @@ DEFAULT_APP_OPTIONS = {
     "period": PERIOD,
     "interval": INTERVAL,
     "delay_between_requests": DELAY_BETWEEN_REQUESTS,
-    "export_excel": EXPORT_EXCEL,
-    "excel_name": EXCEL_NAME,
     "results_directory": str(RESULTS_DIR),
     "min_score_to_display": MIN_SCORE_TO_DISPLAY,
-    "email_min_score": EMAIL_MIN_SCORE,
+    "min_max_weeks": MIN_MAX_WEEKS,
     "email_results_to": EMAIL_RESULTS_TO,
     "indicator_rsi_period": RSI_PERIOD,
     "indicator_rsi_overbought": RSI_OVERBOUGHT,
@@ -213,18 +210,14 @@ DEFAULT_APP_OPTIONS = {
     "europe_market_end": EUROPE_MARKET_END,
     "us_market_start": US_MARKET_START,
     "us_market_end": US_MARKET_END,
-    "loop_active_start": LOOP_ACTIVE_START,
-    "loop_active_end": LOOP_ACTIVE_END,
 }
 
 CONFIG_KEYS = {
     "PERIOD",
     "INTERVAL",
     "DELAY_BETWEEN_REQUESTS",
-    "EXPORT_EXCEL",
-    "EXCEL_NAME",
     "MIN_SCORE_TO_DISPLAY",
-    "EMAIL_MIN_SCORE",
+    "MIN_MAX_WEEKS",
     "EMAIL_RESULTS_TO",
     "RSI_PERIOD",
     "RSI_OVERBOUGHT",
@@ -244,8 +237,6 @@ CONFIG_KEYS = {
     "EUROPE_MARKET_END",
     "US_MARKET_START",
     "US_MARKET_END",
-    "LOOP_ACTIVE_START",
-    "LOOP_ACTIVE_END",
 }
 
 
@@ -308,6 +299,19 @@ def download_data_safe(ticker, period="1y", interval="1d", max_retries=3):
     if err:
         return None, err
     return None, f"Sin datos disponibles para {ticker}."
+
+
+def period_for_week_count(week_count, configured_period):
+    needed = (
+        "1y" if week_count <= 52 else
+        "2y" if week_count <= 104 else
+        "5y" if week_count <= 260 else
+        "10y" if week_count <= 520 else "max"
+    )
+    rank = {"1mo": 0, "3mo": 0, "6mo": 0, "ytd": 0, "1y": 1,
+            "2y": 2, "5y": 3, "10y": 4, "max": 5}
+    configured = str(configured_period).strip().lower()
+    return configured if rank.get(configured, 1) >= rank[needed] else needed
 
 
 
@@ -803,7 +807,7 @@ def calculate_indicators(dataframe, pe_ratio=None, params=None, eps_ttm=None, be
 
 def build_high_score_email_body(results):
     lines = [
-        "Resultados del analisis Smart Money con Score igual o superior a "
+        "Resultados del analisis Smart Money con Score superior a "
         f"{EMAIL_MIN_SCORE}:",
         "",
     ]
@@ -832,7 +836,7 @@ def send_high_score_email(results):
     if not results:
         return (
             False,
-            f"No hay resultados con Score igual o superior a {EMAIL_MIN_SCORE} para enviar.",
+            f"No hay resultados con Score superior a {EMAIL_MIN_SCORE} para enviar.",
         )
 
     missing = []
@@ -855,7 +859,7 @@ def send_high_score_email(results):
     message["From"] = SMTP_FROM
     message["To"] = EMAIL_RESULTS_TO
     message["Subject"] = (
-        f"PyTrader: {len(results)} resultados con Score >= {EMAIL_MIN_SCORE}"
+        f"PyTrader: {len(results)} resultados con Score > {EMAIL_MIN_SCORE}"
     )
     message.set_content(build_high_score_email_body(results))
 
@@ -910,8 +914,6 @@ class OptionsDialog(QDialog):
         self.delay.setDecimals(1)
         self.delay.setSuffix(" s")
 
-        self.export_excel = QCheckBox()
-        self.excel_name = QLineEdit()
         self.results_directory = QLineEdit()
         self.results_directory_button = QPushButton("Examinar…")
         results_directory_row = QHBoxLayout()
@@ -923,9 +925,8 @@ class OptionsDialog(QDialog):
 
         self.min_score_table = QSpinBox()
         self.min_score_table.setRange(0, 100)
-
-        self.min_score_email = QSpinBox()
-        self.min_score_email.setRange(0, 100)
+        self.min_max_weeks = QSpinBox()
+        self.min_max_weeks.setRange(1, 260)
 
         self.rsi_period = QSpinBox()
         self.rsi_period.setRange(2, 100)
@@ -963,20 +964,13 @@ class OptionsDialog(QDialog):
 
         self.email_to = QLineEdit()
 
-        self.loop_start = QTimeEdit()
-        self.loop_end = QTimeEdit()
-        for widget in (self.loop_start, self.loop_end):
-            widget.setDisplayFormat("HH:mm")
-
         form = QFormLayout()
         form.addRow("Periodo de datos", self.period)
         form.addRow("Intervalo de datos", self.interval)
         form.addRow("Espera entre tickers", self.delay)
-        form.addRow("Exportar Excel", self.export_excel)
-        form.addRow("Nombre Excel", self.excel_name)
         form.addRow("Carpeta de resultados", results_directory_widget)
-        form.addRow("Score minimo en tabla", self.min_score_table)
-        form.addRow("Score minimo para email", self.min_score_email)
+        form.addRow("Score mínimo (tabla y email)", self.min_score_table)
+        form.addRow("Semanas para máximos/mínimos", self.min_max_weeks)
         form.addRow("RSI periodo", self.rsi_period)
         form.addRow("RSI sobrecomprado", self.rsi_overbought)
         form.addRow("RSI sobrevendido", self.rsi_oversold)
@@ -992,8 +986,6 @@ class OptionsDialog(QDialog):
         form.addRow("Peso ADX en score", self.adx_weight)
         form.addRow("Peso VWAP en score", self.vwap_weight)
         form.addRow("Email resultados", self.email_to)
-        form.addRow("Loop activo inicio", self.loop_start)
-        form.addRow("Loop activo fin", self.loop_end)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -1017,11 +1009,9 @@ class OptionsDialog(QDialog):
         for widget in (self.period, self.interval):
             widget.currentTextChanged.connect(self._emit_options_changed)
         self.delay.valueChanged.connect(self._emit_options_changed)
-        self.export_excel.toggled.connect(self._emit_options_changed)
-        self.excel_name.textChanged.connect(self._emit_options_changed)
         self.results_directory.textChanged.connect(self._emit_options_changed)
         self.min_score_table.valueChanged.connect(self._emit_options_changed)
-        self.min_score_email.valueChanged.connect(self._emit_options_changed)
+        self.min_max_weeks.valueChanged.connect(self._emit_options_changed)
         self.rsi_period.valueChanged.connect(self._emit_options_changed)
         self.rsi_overbought.valueChanged.connect(self._emit_options_changed)
         self.rsi_oversold.valueChanged.connect(self._emit_options_changed)
@@ -1037,8 +1027,6 @@ class OptionsDialog(QDialog):
         self.adx_weight.valueChanged.connect(self._emit_options_changed)
         self.vwap_weight.valueChanged.connect(self._emit_options_changed)
         self.email_to.textChanged.connect(self._emit_options_changed)
-        self.loop_start.timeChanged.connect(self._emit_options_changed)
-        self.loop_end.timeChanged.connect(self._emit_options_changed)
 
     def _emit_options_changed(self):
         self.option_changed.emit(self.options())
@@ -1051,11 +1039,9 @@ class OptionsDialog(QDialog):
         self.period.setCurrentText(str(options["period"]))
         self.interval.setCurrentText(str(options["interval"]))
         self.delay.setValue(float(options["delay_between_requests"]))
-        self.export_excel.setChecked(bool(options["export_excel"]))
-        self.excel_name.setText(str(options["excel_name"]))
         self.results_directory.setText(str(options["results_directory"]))
         self.min_score_table.setValue(int(options["min_score_to_display"]))
-        self.min_score_email.setValue(int(options["email_min_score"]))
+        self.min_max_weeks.setValue(int(options["min_max_weeks"]))
         self.rsi_period.setValue(int(options["indicator_rsi_period"]))
         self.rsi_overbought.setValue(int(options["indicator_rsi_overbought"]))
         self.rsi_oversold.setValue(int(options["indicator_rsi_oversold"]))
@@ -1071,19 +1057,15 @@ class OptionsDialog(QDialog):
         self.adx_weight.setValue(int(options["indicator_adx_weight"]))
         self.vwap_weight.setValue(int(options["indicator_vwap_weight"]))
         self.email_to.setText(str(options["email_results_to"]))
-        self.loop_start.setTime(qt_time_from_python(options["loop_active_start"]))
-        self.loop_end.setTime(qt_time_from_python(options["loop_active_end"]))
 
     def options(self):
         return {
             "period": self.period.currentText().strip() or DEFAULT_APP_OPTIONS["period"],
             "interval": self.interval.currentText().strip() or DEFAULT_APP_OPTIONS["interval"],
             "delay_between_requests": self.delay.value(),
-            "export_excel": self.export_excel.isChecked(),
-            "excel_name": self.excel_name.text().strip() or DEFAULT_APP_OPTIONS["excel_name"],
             "results_directory": self.results_directory.text().strip() or str(RESULTS_DIR),
             "min_score_to_display": self.min_score_table.value(),
-            "email_min_score": self.min_score_email.value(),
+            "min_max_weeks": self.min_max_weeks.value(),
             "indicator_rsi_period": self.rsi_period.value(),
             "indicator_rsi_overbought": self.rsi_overbought.value(),
             "indicator_rsi_oversold": self.rsi_oversold.value(),
@@ -1103,8 +1085,6 @@ class OptionsDialog(QDialog):
             "europe_market_end": DEFAULT_APP_OPTIONS["europe_market_end"],
             "us_market_start": DEFAULT_APP_OPTIONS["us_market_start"],
             "us_market_end": DEFAULT_APP_OPTIONS["us_market_end"],
-            "loop_active_start": python_time_from_qt(self.loop_start.time()),
-            "loop_active_end": python_time_from_qt(self.loop_end.time()),
         }
 
     def choose_results_directory(self):
@@ -1181,7 +1161,8 @@ class AnalysisThread(QThread):
         results = []
         benchmark = None
         if self.tickers and not self._stop_requested:
-            benchmark, _ = download_data_safe("^GSPC", period=PERIOD, interval=INTERVAL)
+            data_period = period_for_week_count(MIN_MAX_WEEKS, PERIOD)
+            benchmark, _ = download_data_safe("^GSPC", period=data_period, interval=INTERVAL)
             if benchmark is None:
                 self.progress.emit("Sin datos del S&P 500: Beta no disponible.")
         for ticker in self.tickers:
@@ -1191,7 +1172,7 @@ class AnalysisThread(QThread):
                 return
 
             self.progress.emit(f"Analizando {ticker}...")
-            stock_data, error_msg = download_data_safe(ticker, period=PERIOD, interval=INTERVAL)
+            stock_data, error_msg = download_data_safe(ticker, period=data_period, interval=INTERVAL)
 
             if self._stop_requested:
                 self.progress.emit("Análisis cancelado.")
@@ -1227,13 +1208,17 @@ class AnalysisThread(QThread):
                     },
                 )
                 last = stock_data.iloc[-1]
-                rolling_high = float(stock_data["High"].max())
-                rolling_low = float(stock_data["Low"].min())
+                start_date = stock_data.index[-1] - pd.Timedelta(weeks=MIN_MAX_WEEKS)
+                window = stock_data.loc[stock_data.index >= start_date]
+                if window.empty:
+                    window = stock_data.tail(1)
+                rolling_high = float(window["High"].max())
+                rolling_low = float(window["Low"].min())
                 result = {
                     "Ticker": ticker,
                     "Precio": round(float(last["Close"]), 2),
-                    "Máximo 52 semanas": "SI" if float(last["High"]) >= rolling_high * (1 - 1e-8) else "NO",
-                    "Mínimo 52 semanas": "SI" if float(last["Low"]) <= rolling_low * (1 + 1e-8) else "NO",
+                    "Máximo semanas": "SI" if float(last["High"]) >= rolling_high * (1 - 1e-8) else "NO",
+                    "Mínimo semanas": "SI" if float(last["Low"]) <= rolling_low * (1 + 1e-8) else "NO",
                     "Signal": str(last["signal"]),
                     "Score": round(float(last["score"])),
                     "Trend": "SI" if last["trend_up"] else "NO",
@@ -1469,6 +1454,27 @@ def export_unanalyzed_tickers(tickers, filename=FAILED_TICKERS_FILE):
     output_path = output_file_path(filename)
     output_path.write_text("\n".join(values) + ("\n" if values else ""), encoding="utf-8")
     return output_path, len(values)
+
+
+def export_tradingview_watchlist(results, filename):
+    groups = {"Compra fuerte": [], "Compra": [], "Esperar": [], "Vender": []}
+    for row in results:
+        signal = str(row.get("Signal", "")).strip().upper()
+        heading = (
+            "Compra fuerte" if "COMPRA FUERTE" in signal else
+            "Compra" if "COMPRA" in signal else
+            "Esperar" if "ESPERA" in signal or "ESPERAR" in signal else
+            "Vender" if "VENTA" in signal or "VENDER" in signal else None
+        )
+        symbol = tradingview_symbol_for_result(row.get("Ticker", ""))
+        if heading and symbol:
+            groups[heading].append(symbol)
+    path = output_file_path(filename)
+    with path.open("w", encoding="utf-8", newline="") as file:
+        for heading, symbols in groups.items():
+            if symbols:
+                file.write("###" + heading + "," + ",".join(dict.fromkeys(symbols)) + "\n")
+    return path, sum(len(dict.fromkeys(items)) for items in groups.values())
 
 
 def output_file_path(filename):
@@ -1934,11 +1940,6 @@ class MainWindow(QMainWindow):
                 options["delay_between_requests"],
             )
         )
-        options["export_excel"] = self._settings_bool(
-            "export_excel",
-            options["export_excel"],
-        )
-        options["excel_name"] = self.settings.value("excel_name", options["excel_name"])
         options["results_directory"] = self.settings.value(
             "results_directory", options["results_directory"]
         )
@@ -1948,9 +1949,20 @@ class MainWindow(QMainWindow):
                 options["min_score_to_display"],
             )
         )
-        options["email_min_score"] = int(
-            self.settings.value("email_min_score", options["email_min_score"])
+        saved_weeks = self.settings.value("min_max_weeks", None)
+        if saved_weeks is None:
+            old_sessions = self._coerce_option_value(
+                self.settings.value("min_max_sessions", 252), 252
+            )
+            saved_weeks = max(1, round(old_sessions / 5))
+        options["min_max_weeks"] = self._coerce_option_value(
+            saved_weeks, options["min_max_weeks"]
         )
+        # Migra instalaciones existentes al umbral único de Score.
+        options["min_score_to_display"] = int(self.settings.value(
+            "min_score_to_display",
+            self.settings.value("email_min_score", options["min_score_to_display"]),
+        ))
         options["email_results_to"] = self.settings.value(
             "email_results_to",
             options["email_results_to"],
@@ -1976,14 +1988,6 @@ class MainWindow(QMainWindow):
                 options[key],
             )
 
-        for key in (
-            "loop_active_start",
-            "loop_active_end",
-        ):
-            options[key] = text_to_time(
-                self.settings.value(key, time_to_text(options[key])),
-                DEFAULT_APP_OPTIONS[key],
-            )
         return options
 
     def _settings_bool(self, key, default):
@@ -2022,10 +2026,9 @@ class MainWindow(QMainWindow):
             "PERIOD": str(options["period"]),
             "INTERVAL": str(options["interval"]),
             "DELAY_BETWEEN_REQUESTS": float(options["delay_between_requests"]),
-            "EXPORT_EXCEL": bool(options["export_excel"]),
-            "EXCEL_NAME": str(options["excel_name"]),
             "MIN_SCORE_TO_DISPLAY": int(options["min_score_to_display"]),
-            "EMAIL_MIN_SCORE": int(options["email_min_score"]),
+            "EMAIL_MIN_SCORE": int(options["min_score_to_display"]),
+            "MIN_MAX_WEEKS": int(options["min_max_weeks"]),
             "EMAIL_RESULTS_TO": str(options["email_results_to"]),
             "RSI_PERIOD": int(options["indicator_rsi_period"]),
             "RSI_OVERBOUGHT": int(options["indicator_rsi_overbought"]),
@@ -2045,8 +2048,6 @@ class MainWindow(QMainWindow):
             "EUROPE_MARKET_END": options["europe_market_end"],
             "US_MARKET_START": options["us_market_start"],
             "US_MARKET_END": options["us_market_end"],
-            "LOOP_ACTIVE_START": options["loop_active_start"],
-            "LOOP_ACTIVE_END": options["loop_active_end"],
         }
         apply_runtime_config(config_values)
 
@@ -2991,9 +2992,9 @@ class MainWindow(QMainWindow):
         self._open_chart_dialogs.append(dialog)
 
     def on_analysis_result(self, result):
-        if self.analysis_mode == "high" and result.get("Máximo 52 semanas") != "SI":
+        if self.analysis_mode == "high" and result.get("Máximo semanas") != "SI":
             return
-        if self.analysis_mode == "low" and result.get("Mínimo 52 semanas") != "SI":
+        if self.analysis_mode == "low" and result.get("Mínimo semanas") != "SI":
             return
         self.cumulative_results.append(result)
         self._add_result_to_table(result)
@@ -3003,14 +3004,15 @@ class MainWindow(QMainWindow):
             self.refresh_fundamentals_table()
 
     def _add_result_to_table(self, result):
-        if int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY:
+        if (self.analysis_mode == "normal"
+                and int(result.get("Score", 0)) <= MIN_SCORE_TO_DISPLAY):
             return
 
         if self.E_Resultados.columnCount() == 0:
             self.set_table_headers(DEFAULT_RESULT_HEADERS)
 
         # Los resultados pueden incluir campos auxiliares (por ejemplo,
-        # Máximo/Mínimo 52 semanas) que no se muestran como columnas. Leer
+        # Máximo/Mínimo de semanas) que no se muestran como columnas. Leer
         # siempre cada celda por el nombre del encabezado evita desplazar
         # los valores cuando cambia el orden o el contenido del diccionario.
         columns = [
@@ -3125,10 +3127,11 @@ class MainWindow(QMainWindow):
                 item.setForeground(QBrush(QColor("#8a2f2f")))
 
     def on_analysis_finished(self, results):
+        was_loop_cycle = bool(self.analysis_replace_results and self.C_Tiempo.isChecked())
         if self.analysis_mode == "high":
-            results = [row for row in results if row.get("Máximo 52 semanas") == "SI"]
+            results = [row for row in results if row.get("Máximo semanas") == "SI"]
         elif self.analysis_mode == "low":
-            results = [row for row in results if row.get("Mínimo 52 semanas") == "SI"]
+            results = [row for row in results if row.get("Mínimo semanas") == "SI"]
         self.append_to_visor("Análisis finalizado.")
         self.B_Lista.setEnabled(True)
         self.B_Carpeta.setEnabled(True)
@@ -3161,7 +3164,16 @@ class MainWindow(QMainWindow):
                 result_keys.add(key)
 
         if not results and not self.cumulative_results:
-            self.append_to_visor("No se generaron resultados.")
+            if self.analysis_mode == "high":
+                self.append_to_visor(
+                    f"No se encontraron empresas en máximos de las últimas {MIN_MAX_WEEKS} semanas."
+                )
+            elif self.analysis_mode == "low":
+                self.append_to_visor(
+                    f"No se encontraron empresas en mínimos de las últimas {MIN_MAX_WEEKS} semanas."
+                )
+            else:
+                self.append_to_visor("No se generaron resultados.")
             return
 
         if not self.cumulative_results:
@@ -3175,13 +3187,21 @@ class MainWindow(QMainWindow):
         )
         self.cumulative_results = sorted_results
 
+        if was_loop_cycle:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            try:
+                path, count = export_tradingview_watchlist(sorted_results, f"Loop_{stamp}.txt")
+                self.append_to_visor(f"Lista TradingView del loop: {count} valores -> {path}")
+            except (OSError, TypeError, ValueError) as exc:
+                self.append_to_visor(f"Error creando lista TradingView del loop: {exc}")
+
         if self.E_Resultados.rowCount() == 0:
             self.append_to_visor(
                 f"No hay resultados con Score superior a {MIN_SCORE_TO_DISPLAY}."
             )
 
         high_score_results = [
-            row for row in sorted_results if int(row.get("Score", 0)) >= EMAIL_MIN_SCORE
+            row for row in sorted_results if int(row.get("Score", 0)) > MIN_SCORE_TO_DISPLAY
         ]
         try:
             email_sent, email_message = send_high_score_email(high_score_results)
@@ -3196,9 +3216,6 @@ class MainWindow(QMainWindow):
 
     def on_b_generar_lista(self):
         """Exporta los resultados que permanecen visibles con el filtro actual."""
-        if not EXPORT_EXCEL:
-            self.append_to_visor("La exportación de listas está desactivada en la configuración.")
-            return
         columns = {
             self.E_Resultados.horizontalHeaderItem(col).text().strip().lower(): col
             for col in range(self.E_Resultados.columnCount())
@@ -3228,7 +3245,7 @@ class MainWindow(QMainWindow):
         if not visible_results:
             self.append_to_visor("No hay resultados visibles para exportar.")
             return
-        tv_file = output_file_path(Path(EXCEL_NAME).with_suffix(".txt"))
+        tv_file = output_file_path("Mi_Screener.txt")
         groups = {"Compra fuerte": [], "Compra": [], "Esperar": [], "Vender": []}
         for ticker, signal in visible_results:
             tv = tradingview_symbol_for_result(ticker)
